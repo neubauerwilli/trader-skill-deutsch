@@ -149,5 +149,24 @@ class Check(unittest.TestCase):
         self.assertEqual(state["last_check"], now.isoformat())
 
 
+
+class FeedValidityRegression(unittest.TestCase):
+    def test_future_timestamp_is_not_reported_as_current_news(self):
+        now = news.parse_time(NOW)
+        item = {"id": "future", "time": now + datetime.timedelta(days=1)}
+        self.assertEqual(news.select([item], {}, now), [])
+
+    def test_duplicate_alias_is_remembered_in_same_batch(self):
+        now = news.parse_time(NOW)
+        def story(id_, link, title, ticker):
+            return {"id": id_, "link": link, "title": title, "time": now, "touches": [ticker]}
+        a = story("rss:a", "https://example.org/a", "Meldung A", "A")
+        b = story("rss:b", "https://example.org/a", "Anderer Feedtitel", "B")
+        c = story("rss:b", "https://example.org/b", "Dritter Feedtitel", "C")
+        result = news.dedupe([a,b,c])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["touches"], ["A", "B", "C"])
+
+
 if __name__ == "__main__":
     unittest.main()

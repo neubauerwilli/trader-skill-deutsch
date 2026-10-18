@@ -150,8 +150,9 @@ class Tickers(unittest.TestCase):
     def test_guesses_are_flagged(self):
         _, _, positions, _ = quarter(combine=False)
         unsure = sorted(p["ticker"] for p in positions if p["ticker_check"])
-        # Matched by a name prefix: the 13F shortens or decorates these names.
-        self.assertEqual(unsure, ["JEF", "NYT"])
+        # Name prefixes need checking; BAC/BACRP is not an unambiguous
+        # share-class mapping just because one ticker starts with the other.
+        self.assertEqual(unsure, ["BAC", "JEF", "NYT"])
 
     def test_name_normalising(self):
         k = e13.name_keys
@@ -171,7 +172,7 @@ class Tickers(unittest.TestCase):
         with open(os.path.join(DIR, "company_tickers.json")) as fh:
             index = e13.TickerIndex(e13.load_company_tickers(json.load(fh)))
         bac = e13.cik10(70858)
-        self.assertEqual(index.ticker_for(bac, "COM"), ("BAC", False))
+        self.assertEqual(index.ticker_for(bac, "COM"), ("BAC", True))
         oxy = e13.cik10(797468)
         self.assertEqual(index.ticker_for(oxy, "COM"), ("OXY", False))
         lly = e13.cik10(2078416)
@@ -200,7 +201,7 @@ class Tickers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "tickers.json")
             with open(path, "w") as fh:
-                json.dump({"650111107": "NYT", "47233W109": "JEF"}, fh)
+                json.dump({"650111107": "NYT", "47233W109": "JEF", "060505104": "BAC"}, fh)
             f = offline()
             meta, rows, _ = e13.load_quarter(f, BRK)
             ov = e13.load_overrides([e13.CLASSES, path])
@@ -317,6 +318,29 @@ class Rules(unittest.TestCase):
         data = json.loads(text)
         self.assertEqual(data["total"], 299253556246)
         self.assertEqual(data["positions"][0]["ticker"], "AAPL")
+
+
+
+class MappingValidityRegression(unittest.TestCase):
+    def test_common_ticker_prefix_does_not_make_class_mapping_certain(self):
+        index = e13.TickerIndex([("0000000001", "FAKE", "Fiktive Firma"),
+                                ("0000000001", "FAKE.A", "Fiktive Firma")])
+        self.assertEqual(index.ticker_for("0000000001", "CLASS A"), ("FAKE.A", False))
+        self.assertTrue(index.ticker_for("0000000001", "COM")[1])
+
+    def test_different_etfs_are_not_merged_as_share_classes(self):
+        def row(cusip, title, ticker):
+            return {"issuer": "FAKE ETF TRUST", "title": title, "cusip": cusip,
+                    "value": 10, "shares": 1, "share_type": "SH", "put_call": "", "rows": 1,
+                    "ticker": ticker, "pct_of_13f": 50}
+        rows = [row("123456101", "CORE 500 ETF", "FIVE"), row("123456202", "SMALL CAP ETF", "SMAL")]
+        self.assertEqual(len(e13.combine_classes(rows, 20)), 2)
+
+    def test_invalid_13f_number_and_missing_cusip_are_rejected(self):
+        for val, cusip in (("NaN", "123456789"), ("Infinity", "123456789"), ("10", "")):
+            xml = '<root><infoTable><nameOfIssuer>FAKE</nameOfIssuer><cusip>%s</cusip><value>%s</value><sshPrnamt>1</sshPrnamt></infoTable></root>' % (cusip, val)
+            with self.subTest(val=val, cusip=cusip), self.assertRaises(e13.EdgarError):
+                e13.parse_info_table(xml)
 
 
 if __name__ == "__main__":

@@ -15,11 +15,14 @@ description: >-
   "verbinde Interactive Brokers", "richte Paper Trading ein", "place the
   orders", "buy it", "execute", "send it to my broker", "connect Alpaca",
   "connect Interactive Brokers", "set up paper trading", oder nachdem
-  /trader-risiko bestanden ist.
+  /trader-skill-deutsch:trader-risiko bestanden ist.
 argument-hint: "[Auftragsnummer]"
 ---
 
 # trader-broker
+
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
 
 Keine Anlageberatung. Der Auftrags-Ausführer ist der einzige Skill in diesem
 Paket, der zu einem echten Auftrag führen kann, deshalb ist er der
@@ -27,7 +30,8 @@ strengste. Ein Auftrag erreicht den Markt erst nach drei getrennten Toren,
 jedes Mal, für jeden Auftrag:
 
 1. **trader-risiko hat genau diesen Auftrag heute bestanden** (zugeordnet über
-   den Fingerabdruck).
+   Fingerabdruck und Ticketnummer). Reihenfolge, Konfiguration, Kontodaten und
+   Kurse müssen noch dem Prüfstand entsprechen.
 2. **Der Nutzer hat im Chat für genau diesen einen Auftrag ein ausdrückliches
    Ja getippt.**
 3. **Der Nutzer hat auf Claudes eigener Berechtigungskarte "Allow once"
@@ -42,6 +46,9 @@ oder **"yes"** (oder "y") beginnt und keine Bedingung enthält. "ja, aber nur
 1000", "ja zu allen", "ja, später" oder "ok" zählen nicht. Sag dem Nutzer
 vorher, dass er für genau diesen einen Auftrag "ja" tippen muss. Übersetze eine
 Antwort nie selbst in ein Ja und gib sie Wort für Wort an `--reply` weiter.
+Ein unbekannter Ticker, die falsche Kauf-/Verkaufsseite oder ein zusätzlicher
+abweichender Betrag zählt nicht als Freigabe. Bei unklaren Zusätzen das genaue
+Ticket erneut zeigen und nur um ein schlichtes "ja" bitten.
 
 `${CLAUDE_SKILL_DIR}` unten ist der Ordner dieses Skills (dort liegt diese
 SKILL.md).
@@ -142,13 +149,16 @@ Werkzeuge, die Aufträge entwerfen, auf Needs approval.
 
 1. `ticket.py show`. Nur BEREITE (READY) Tickets gehen an den Nutzer. Ein
    Ticket, das NICHT BEREIT oder GESPERRT ist, geht zurück an
-   `/trader-risiko`.
+   `/trader-skill-deutsch:trader-risiko`. Es darf nur eine offene Freigabe geben. Frühere PASS-
+   Aufträge im Stapel zuerst tatsächlich ausführen lassen, das Depot
+   aktualisieren und erneut prüfen. Ein lediglich platzierter Verkauf darf
+   keinen vorgezogenen Kauf finanzieren.
 2. Zeig EIN Ticket und frag: "Soll dieser Auftrag platziert werden? Antworte
-   yes oder no." Eine Frage pro Auftrag. Biete nie "yes für alle" an.
+   ja oder nein." Eine Frage pro Auftrag. Biete nie "ja für alle" an.
 3. Starte `ticket.py approve --index N --reply "<die Antwort des Nutzers,
    Wort für Wort>"`. Gibt es "Nicht erfasst" aus, war die Antwort kein
-   ausdrückliches yes für diesen Auftrag (zum Beispiel "sure", "ja",
-   "yes to all" oder ein yes, das eine andere Aktie oder einen anderen Betrag
+   ausdrückliches Ja für diesen Auftrag (zum Beispiel "sure", "ja, aber",
+   "yes to all" oder ein Ja, das eine andere Aktie oder einen anderen Betrag
    nennt). Frag noch einmal. Mach aus einer Antwort nie selbst ein Ja.
 4. Erst nach "Dein Ja ... ist erfasst" rufst du `place_stock_order` mit genau
    dem JSON auf, das das Ticket ausgegeben hat. Claudes Karte erscheint: Allow
@@ -160,7 +170,18 @@ Werkzeuge, die Aufträge entwerfen, auf Needs approval.
    versucht.
 6. Sobald die Ausführung bekannt ist (die Antwort des Werkzeugs oder später
    `get_all_positions`), trägt `ticket.py fill` sie als Steuer-Lot für
-   trader-steuer in `trader/portfolio.json` ein. Dann das nächste Ticket.
+   trader-steuer in `trader/portfolio.json` ein. Nur tatsächliche positive,
+   endliche Aktienzahl und Ausführungspreis erfassen; keine Beispielwerte.
+   Alternativ kann `result --status placed --broker-id ID` zusammen mit
+   `--filled-qty Q --filled-price P` die bestätigte Ausführung erfassen. Beide
+   Ausführungsfelder gehören zusammen. Bei einem mit `--portfolio` geprüften
+   eigenen Dateipfad muss `result --portfolio` genau dieselbe Depotdatei
+   angeben; ein Ja darf keine andere Kontodatei verändern. Ändern sich der
+   Broker-Ausführungsstand oder das Tageslimit, ist vor dem nächsten Ja erneut
+   zu prüfen. Danach das Depot und die übrigen
+   Vorschläge erneut mit trader-risiko prüfen, dann das nächste Ticket. Bei
+   failed oder denied vor einem neuen Versuch ebenfalls neu prüfen und ein
+   neues Ja einholen. Alte Freigaben nicht wiederverwenden.
 
 ## Beispiel: das Reel
 
@@ -168,7 +189,7 @@ So sieht das Ticket aus (die Ausgabe von `ticket.py show`, auf Deutsch):
 
 ```
 AUFTRAG 1 von 5, PAPER-Konto (Spielgeld), Alpaca
-  KAUF $1,250 von AAPL, Market-Order, gültig für heute
+  KAUF 1,250 USD von AAPL, Market-Order, gültig für heute
   BEREIT: trader-risiko PASS, wartet auf dein Ja
   Claude ruft place_stock_order genau so auf:
     {"symbol": "AAPL", "side": "buy", "notional": "1250",

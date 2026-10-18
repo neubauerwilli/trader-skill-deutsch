@@ -159,5 +159,39 @@ class Cli(unittest.TestCase):
                          ["RevenueFromContractWithCustomerExcludingAssessedTax"])
 
 
+
+class PeriodValidityRegression(unittest.TestCase):
+    @staticmethod
+    def fact(start, end, value):
+        return {"start": start, "end": end, "val": value, "form": "10-K", "fy": 2026,
+                "fp": "FY", "filed": "2027-02-01", "accn": "fake"}
+
+    def test_requested_currency_is_not_replaced_by_another(self):
+        doc = {"facts": {"us-gaap": {"Revenues": {"units": {"EUR": [self.fact("2026-01-01", "2026-03-31", 10)]}}}}}
+        self.assertEqual(facts.facts_for(doc, "Revenues", "USD"), [])
+
+    def test_q4_requires_three_contiguous_quarters(self):
+        f = self.fact
+        bad = [f("2026-01-01", "2026-03-31", 10), f("2026-03-01", "2026-05-31", 20),
+               f("2026-07-01", "2026-09-30", 30), f("2026-01-01", "2026-12-31", 100)]
+        self.assertNotIn("2026-12-31", facts.quarterly(bad))
+        good = [f("2026-01-01", "2026-03-31", 10), f("2026-04-01", "2026-06-30", 20),
+                f("2026-07-01", "2026-09-30", 30), f("2026-01-01", "2026-12-31", 100)]
+        self.assertEqual(facts.quarterly(good)["2026-12-31"]["value"], 40)
+
+    def test_nonfinite_xbrl_values_are_not_a_quarter(self):
+        for value in (float("nan"), float("inf"), True):
+            self.assertEqual(facts.quarterly([self.fact("2026-01-01", "2026-03-31", value)]), {})
+
+    def test_stale_eps_series_is_not_called_current_ttm(self):
+        f = self.fact
+        rev = [f("2026-01-01", "2026-03-31", 100)]
+        eps = [f("2024-01-01", "2024-03-31", 1), f("2024-04-01", "2024-06-30", 1),
+               f("2024-07-01", "2024-09-30", 1), f("2024-10-01", "2024-12-31", 1)]
+        doc = {"facts": {"us-gaap": {"Revenues": {"units": {"USD": rev}},
+                "EarningsPerShareDiluted": {"units": {"USD/shares": eps}}}}}
+        self.assertNotIn("eps_diluted", facts.analyse(doc)["ttm"])
+
+
 if __name__ == "__main__":
     unittest.main()

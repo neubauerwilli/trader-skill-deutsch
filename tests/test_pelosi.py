@@ -196,5 +196,38 @@ class ParseReport(unittest.TestCase):
         self.assertIsNone(ptr.iso("13/45/2026"))
 
 
+
+class DisclosureValidityRegression(unittest.TestCase):
+    def test_notification_deadline_can_be_earlier_than_45_days(self):
+        text_ = "Name: Fiktives Mitglied\n  DC Example Corp (FAKE) [ST] P 07/01/2026 07/01/2026 $1,001 - $15,000\n"
+        report = ptr.parse_ptr_text(text_, filed="2026-08-05")
+        row = report["rows"][0]
+        self.assertEqual(row["owner_name"], "abhängiges Kind")
+        self.assertEqual((row["amount_low"], row["amount_high"]), (1001, 15000))
+        self.assertEqual(row["days_to_disclose"], 35)
+        self.assertTrue(row["late"])
+        self.assertEqual(row["disclosure_deadline"], "2026-07-31")
+        self.assertNotIn("ZU SPÄT: über 45", ptr.describe(row))
+
+    def test_future_index_date_is_not_a_new_public_filing(self):
+        rows = [{"doc_id": "fake", "filed": "2026-10-19"}]
+        self.assertEqual(ptr.new_since(rows, {}, datetime.date(2026, 10, 18)), [])
+        self.assertEqual(ptr.new_since(rows, {"seen": [], "last_check": "2026-10-17"},
+                                       datetime.date(2026, 10, 18)), [])
+
+
+
+class ChronologyRegression(unittest.TestCase):
+    def test_filing_before_trade_is_rejected_instead_of_implying_foreknowledge(self):
+        row = "  SP Fiktiv (FAKE) [ST] P 07/01/2026 07/01/2026 $1,001 - $15,000\n"
+        with self.assertRaises(ptr.PtrError):
+            ptr.parse_ptr_text(row, filed="2026-06-30")
+
+    def test_notification_before_trade_is_rejected(self):
+        row = "  JT Fiktiv (FAKE) [ST] P 07/01/2026 06/30/2026 $1,001 - $15,000\n"
+        with self.assertRaises(ptr.PtrError):
+            ptr.parse_ptr_text(row, filed="2026-07-20")
+
+
 if __name__ == "__main__":
     unittest.main()

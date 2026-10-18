@@ -19,6 +19,9 @@ argument-hint: "[Ticker]"
 
 # trader-steuer
 
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
+
 **Wichtig vorab: Die Regeln in diesem Skill sind US-Steuerrecht** (cost basis,
 wash sale, tax-loss harvesting). Für Privatanleger in Deutschland gilt die
 **Abgeltungsteuer**, und die funktioniert anders: Es gibt keine
@@ -59,6 +62,10 @@ keine Lots, frag nach Kaufdaten und Kosten. Erfinde nie einen Einstandswert.
 
 ## Die Regeln, die er anwendet (US-Bundessteuer, nur Rechnung)
 
+**Modellgrenzen:** Dies ist eine Lot-Rechnung und konservative Konfliktsuche, kein vollständiges US-Steuerbuch. Mehrere Verkäufe können dieselben Ersatzaktien berühren; deren eindeutige Zuordnung über Transaktionen, später eintreffende Käufe sowie die Anpassung von Einstandswert und übertragener Haltefrist werden nicht automatisch fortgeschrieben. `sell --record` reduziert die verkauften Lots und protokolliert den Verkauf, korrigiert aber nicht automatisch die Ersatz-Lots. Den Bericht nicht als fertige Steuererklärung oder endgültig abzugsfähigen Verlust verwenden. Anteilsklassen wie GOOG/GOOGL sind konservative Prüffamilien, keine verbindliche Feststellung steuerlicher Gleichheit. Grundlage: [IRS Publication 550: Wash Sales und Holding Period](https://www.irs.gov/publications/p550).
+
+Stückzahlen und Kosten müssen endlich und nicht negativ sein; Verkaufsmengen und Kurse positiv. Pro Ticker eine Position, eindeutige Lot-IDs, und eine angegebene Positionsstückzahl muss zur Summe der Lots passen. Mehrere Depotauszugzeilen derselben Aktie vorab in einer Position mit mehreren Lots zusammenführen. Der gesamte Lot-Einstand darf null sein, zum Beispiel nach einer bestätigten Basisanpassung; fehlende Kosten nicht als null erfinden.
+
 - **Frist**: langfristig (long term), wenn mehr als ein Jahr nach dem
   Kaufdatum verkauft wird, sonst kurzfristig (short term). `report --lots`
   zeigt das Datum, ab dem jedes Lot langfristig wird.
@@ -73,6 +80,7 @@ keine Lots, frag nach Kaufdaten und Kosten. Erfinde nie einen Einstandswert.
   werden, geplante Käufe in `trader/orders.json` und die Verlustverkäufe, die
   es protokolliert hat. Ein IRA-Konto, die Konten des Partners oder einen
   anderen Broker sieht es nicht, und die zählen auch. Sag das dazu.
+  Verlust-Lots werden auch dann auf Konflikte geprüft, wenn andere Lots im selben Verkauf einen größeren Gewinn erzeugen. Der Gesamtgewinn darf einen einzelnen Wash-Sale-Verlust nicht verdecken. Der angegebene nicht anerkannte Betrag bleibt wegen der genannten Modellgrenzen eine Schätzung.
 
 ## Schritte
 
@@ -87,15 +95,15 @@ keine Lots, frag nach Kaufdaten und Kosten. Erfinde nie einen Einstandswert.
    Wash-Sale-Konflikt und den ersten Tag, an dem er wieder kaufen dürfte.
    Kandidaten mit Konflikt werden nicht vorgeschlagen.
 4. Nur wenn der Nutzer Vorschläge will: `harvest --write`, dann
-   `/trader-risiko`, dann `/trader-broker`, ein Ja pro Auftrag.
+   `/trader-skill-deutsch:trader-risiko`, dann `/trader-skill-deutsch:trader-broker`, ein Ja pro Auftrag.
 5. Nachdem ein Verkauf ausgeführt ist, aktualisiert `lots.py sell ...
    --record` die Lots und protokolliert das Ergebnis für das Jahr.
 
 ## Beispiel: das Depot aus dem Reel
 
-Das Kopier-Depot, gekauft am 2026-10-13 (AAPL $1,250, AXP $1,119, GOOGL $823,
-KO $708, BAC $600), hat ein Lot pro Aktie, alle kurzfristig bis 2027-10-14.
-Fällt BAC später unter seinen Einstand von $600, zeigt `harvest --min-loss 25`
+Das Kopier-Depot, gekauft am 2026-10-13 (AAPL 1,250 USD, AXP 1,119 USD, GOOGL 823 USD,
+KO 708 USD, BAC 600 USD), hat ein Lot pro Aktie, alle kurzfristig bis 2027-10-14.
+Fällt BAC später unter seinen Einstand von 600 USD, zeigt `harvest --min-loss 25`
 das Lot BAC-1 mit seinem Verlust und "nicht wieder kaufen vor" einem Datum
 31 Tage nach dem Verkauf. Hat der Nutzer zusätzlich einen BAC-Kauf in
 `trader/orders.json` geplant, meldet das Tool einen Wash Sale, statt den
@@ -105,7 +113,7 @@ Verkauf vorzuschlagen.
 
 Er reicht nichts ein, nennt nie einen Steuersatz oder eine Steuerrechnung,
 sagt nie, was der Nutzer schuldet, löst nie einen Auftrag aus und schlägt nie
-ein Harvesting vor, von dem er sieht, dass es ein Wash Sale wäre.
+standardmäßig ein Harvesting mit erkanntem Wash-Sale-Konflikt vor. `--include-wash` ist eine ausdrückliche technische Ausnahme: nur auf klaren Nutzerwunsch verwenden, Konflikt und Modellgrenzen sichtbar beibehalten; keine steuerliche Freigabe daraus ableiten.
 
 ## Sicherheit
 
@@ -115,13 +123,7 @@ ein Harvesting vor, von dem er sieht, dass es ein Wash Sale wäre.
 - Standardmäßig Paper Trading, also Spielgeld (`"paper": true`). Der Wechsel
   auf echtes Geld ist die eigene Entscheidung des Nutzers, in seiner eigenen
   Config.
-- Nichts in diesem Paket löst einen Auftrag aus außer trader-broker, und nur,
-  wenn alle drei Bedingungen zutreffen: trader-risiko hat genau diesen Auftrag
-  heute bestanden, der Nutzer hat im Chat für genau diesen einen Auftrag ein
-  ausdrückliches Ja getippt (in trader-broker als "yes"), und der Nutzer hat
-  auf Claudes eigener Karte "Allow once" geklickt, weil das Auftragswerkzeug
-  auf "Needs approval" steht (Customize > Connectors > tool permissions). Stell
-  ein Auftragswerkzeug nie auf "Always allow". Ohne dein Ja passiert nichts.
+- Dieses Skript löst keinen Auftrag aus. trader-broker bereitet ein Ticket vor, platziert selbst aber keine Order. Für einen separat verbundenen Broker sind Risikoprüfung, ausdrückliches Ja je Order und zusätzliche Tool-Genehmigung vorgesehen. Das sind Projektregeln und Berechtigungen, keine technisch unfehlbare Sperre für alle möglichen Ausführungswege. Kein Auftragswerkzeug auf "Always allow" setzen.
 - Keine Optionen, kein Hebel (Margin), kein Leerverkauf (Short Selling), es sei
   denn, die Config erlaubt es und der Nutzer bestätigt es.
 - Broker-Schlüssel liegen in Umgebungsvariablen oder in der Claude-Desktop-

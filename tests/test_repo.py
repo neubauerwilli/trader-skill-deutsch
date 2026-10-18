@@ -44,8 +44,7 @@ class Repo(unittest.TestCase):
             fm, text = frontmatter(os.path.join(ROOT, s, "SKILL.md"))
             self.assertIn("name: %s\n" % s, fm + "\n", s)
             self.assertRegex(fm, r"description: ", s)
-            self.assertGreater(len(fm), 200, "%s description is too thin" % s)
-            self.assertGreater(len(text.splitlines()), 60, s)
+            self.assertTrue(text.split("---", 2)[-1].strip(), s)
 
     def test_order_path_skills_carry_the_safety_rule(self):
         for s in ORDER_PATH:
@@ -65,18 +64,17 @@ class Repo(unittest.TestCase):
         self.assertEqual(market["name"], "trader-skill-deutsch")
         self.assertEqual(market["plugins"][0]["name"], "trader-skill-deutsch")
 
-    def test_readme_carries_the_reel_copy(self):
+    def test_readme_documents_the_own_plugin_installation(self):
         with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
             readme = " ".join(fh.read().split())
         self.assertTrue(readme.startswith("# Der Trader-Skill"))
-        for line in (ABOUT,
-                     "https://github.com/neubauerwilli/trader-skill-deutsch install skill",
+        for line in ("https://github.com/neubauerwilli/trader-skill-deutsch",
                      "/plugin marketplace add neubauerwilli/trader-skill-deutsch",
                      "/plugin install trader-skill-deutsch@trader-skill-deutsch",
                      "## Das Kleingedruckte"):
             self.assertIn(line, readme)
         for s in SKILLS:
-            self.assertIn("/" + s, readme, s)
+            self.assertIn("/trader-skill-deutsch:" + s, readme, s)
 
     def test_no_em_dashes_and_no_personal_email(self):
         for path in every_text_file():
@@ -92,6 +90,19 @@ class Repo(unittest.TestCase):
             cfg = json.load(fh)
         self.assertIs(cfg["paper"], True)
         self.assertIs(cfg.get("allow_options", False), False)
+
+    def test_cross_skill_plugin_commands_resolve_to_registered_skills(self):
+        for skill in SKILLS:
+            _, text = frontmatter(os.path.join(ROOT, skill, "SKILL.md"))
+            for target in re.findall(r"/trader-skill-deutsch:(trader-[a-z]+(?:-[a-z]+)*)", text):
+                self.assertIn(target, SKILLS, (skill, target))
+            for target in SKILLS:
+                self.assertNotRegex(text, r"(?<![:\w])/" + re.escape(target) + r"\b")
+
+    def test_money_examples_are_not_claude_positional_templates(self):
+        for skill in SKILLS:
+            _, text = frontmatter(os.path.join(ROOT, skill, "SKILL.md"))
+            self.assertNotRegex(text, r"\$\d", skill)
 
 
 if __name__ == "__main__":

@@ -231,5 +231,48 @@ class Cli(unittest.TestCase):
         self.assertIn("keine Regeln", err)
 
 
+
+class TimeValidityRegression(unittest.TestCase):
+    def test_unknown_calendar_never_claims_open_or_rings(self):
+        now = ny("2028-03-01T10:00")
+        status = alerts.market_status(now)
+        self.assertFalse(status["calendar_known"])
+        self.assertFalse(status["open"])
+        self.assertNotIn("next_open", status)
+        self.assertEqual(alerts.evaluate([{"id": "bell", "type": "opening_bell"}], {}, status, {}, now)[0], [])
+
+    def test_nonexistent_new_york_dst_time_is_rejected(self):
+        with self.assertRaises(alerts.AlertError):
+            ny("2026-03-08T02:30")
+        self.assertEqual(ny("2026-03-08T03:30"), DT(2026, 3, 8, 7, 30))
+
+    def test_explicit_european_offset_maps_to_same_open(self):
+        self.assertEqual(ny("2026-10-13T15:30+02:00"), ny("2026-10-13T09:30"))
+        self.assertTrue(alerts.market_status(ny("2026-10-13T15:30+02:00"))["open"])
+
+    def test_year_boundary_does_not_invent_next_open(self):
+        status = alerts.market_status(ny("2027-12-31T17:00"))
+        self.assertNotIn("next_open", status)
+
+
+
+class QuoteValidityRegression(unittest.TestCase):
+    def test_invalid_quotes_are_not_written_as_a_price(self):
+        for price in (float("nan"), float("inf"), -1, 0, True):
+            raw = json.dumps({"chart": {"result": [{"meta": {"regularMarketPrice": price}}]}})
+            with self.subTest(price=price), self.assertRaises(alerts.AlertError):
+                alerts.parse_yahoo(raw, "FAKE")
+        for price in ("NaN", "Infinity", "bad", "-1", "0"):
+            raw = "Symbol,Date,Time,Close\nFAKE.US,2026-10-18,12:00:00,%s" % price
+            with self.subTest(price=price), self.assertRaises(alerts.AlertError):
+                alerts.parse_stooq(raw, "FAKE")
+
+    def test_unknown_clock_is_explicitly_unknown(self):
+        code, out, err = run(["clock", "--now", "2028-03-01T10:00"])
+        self.assertEqual(code, 1, err)
+        self.assertIn("UNBEKANNT", out)
+        self.assertNotIn("Nächste Öffnung:", out)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -42,6 +42,7 @@ import csv
 import datetime
 import io
 import json
+import math
 import os
 import sys
 import time
@@ -116,7 +117,7 @@ def eastern_to_utc(local):
         utc = local - datetime.timedelta(hours=off)
         if eastern_offset(utc) == off:
             return utc
-    return local + datetime.timedelta(hours=5)
+    raise AlertError("Diese New Yorker Ortszeit existiert wegen der Sommerzeitumstellung nicht; gib eine gültige Zeit mit Offset an")
 
 
 def parse_now(text):
@@ -140,6 +141,8 @@ def trading_day(d):
     name = NYSE_HOLIDAYS.get(d.isoformat())
     if name:
         return False, "NYSE-Feiertag: " + name
+    if d.year not in CALENDAR_YEARS:
+        return False, "Feiertagskalender unbekannt; Öffnung nicht bestätigt"
     return True, ""
 
 
@@ -203,10 +206,14 @@ def parse_stooq(text, sym):
     def f(k):
         v = r.get(k, "")
         try:
-            return float(v)
+            number = float(v)
+            return number if math.isfinite(number) else None
         except ValueError:
             return None
-    return {"symbol": sym.upper(), "price": float(close), "open": f("open"), "high": f("high"),
+    price = f("close")
+    if price is None or price <= 0:
+        raise AlertError("Stooq hat keinen gültigen positiven Kurs für %s" % sym)
+    return {"symbol": sym.upper(), "price": price, "open": f("open"), "high": f("high"),
             "low": f("low"), "prev_close": None, "time": ("%s %s" % (r.get("date", ""), r.get("time", ""))).strip(),
             "source": "stooq"}
 
@@ -222,8 +229,8 @@ def parse_yahoo(text, sym):
         raise AlertError("Yahoo hat keine Daten für %s: %s" % (sym, err.get("description", "unbekannter Ticker")))
     m = res[0].get("meta", {})
     price = m.get("regularMarketPrice")
-    if price is None:
-        raise AlertError("Yahoo hat keinen Kurs für %s" % sym)
+    if isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
+        raise AlertError("Yahoo hat keinen gültigen positiven Kurs für %s" % sym)
     t = m.get("regularMarketTime")
     when = (datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             if t else "")
@@ -405,7 +412,8 @@ def cmd_clock(a):
         print(json.dumps(st, indent=2))
     else:
         print("New York %s (%s): NYSE %s, %s." % (st["now_new_york"], st["weekday"],
-                                                  "OFFEN" if st["open"] else "geschlossen", st["reason"]))
+                                                  ("UNBEKANNT" if not st["calendar_known"] else
+                                                   "OFFEN" if st["open"] else "geschlossen"), st["reason"]))
         if st.get("opens"):
             print("Heutige Handelszeit: %s bis %s%s." % (st["opens"], st["closes"],
                                                     (" (Früh-Schluss: %s)" % st["early_close"]) if st.get("early_close") else ""))
@@ -461,7 +469,7 @@ def cmd_check(a):
         print(json.dumps({"market": status, "rings": rings, "errors": errors,
                           "quotes": {s: q["price"] for s, q in quotes.items()}}, indent=2))
     else:
-        print("NYSE %s (%s New York, %s)." % ("OFFEN" if status["open"] else "geschlossen", status["now_new_york"],
+        print("NYSE %s (%s New York, %s)." % ("UNBEKANNT" if not status["calendar_known"] else "OFFEN" if status["open"] else "geschlossen", status["now_new_york"],
                                               status["reason"]))
         for r in rings:
             print("ALARM " + r["message"])

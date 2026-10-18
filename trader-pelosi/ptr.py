@@ -188,6 +188,7 @@ def new_since(rows, state, today, first_days=LATE_DAYS):
     """Zeilen, die noch nicht gesehen wurden. Beim ersten Lauf nur die der
     letzten first_days Tage, damit dich nicht das ganze Jahr überschwemmt."""
     seen = set(state.get("seen", []))
+    rows = [r for r in rows if r.get("filed") and r["filed"] <= today.isoformat()]
     if state.get("last_check") is None:
         cutoff = (today - _dt.timedelta(days=first_days)).isoformat()
         return [r for r in rows if (r["filed"] or "") >= cutoff]
@@ -247,9 +248,20 @@ def _finish(row, filed):
     if sh:
         row["shares"] = int(sh.group(1).replace(",", ""))
     if filed and row["date"]:
-        days = (_dt.date.fromisoformat(filed) - _dt.date.fromisoformat(row["date"])).days
+        trade_date = _dt.date.fromisoformat(row["date"])
+        filed_date = _dt.date.fromisoformat(filed)
+        if filed_date < trade_date:
+            raise PtrError("Meldedatum liegt vor dem Handelsdatum; Original-PDF prüfen")
+        days = (filed_date - trade_date).days
         row["days_to_disclose"] = days
-        row["late"] = days > LATE_DAYS
+        deadline = trade_date + _dt.timedelta(days=LATE_DAYS)
+        if row.get("notified"):
+            notified = _dt.date.fromisoformat(row["notified"])
+            if not trade_date <= notified <= filed_date:
+                raise PtrError("Kenntnisdatum liegt außerhalb von Handel und Meldung; Original-PDF prüfen")
+            deadline = min(deadline, notified + _dt.timedelta(days=30))
+        row["disclosure_deadline"] = deadline.isoformat()
+        row["late"] = filed_date > deadline
     return row
 
 
@@ -380,7 +392,7 @@ def describe(row):
     when = "gehandelt am %s" % row["date"]
     if row.get("days_to_disclose") is not None:
         when += ", %d Tage später gemeldet%s" % (row["days_to_disclose"],
-                                                   " (ZU SPÄT: über 45)" if row.get("late") else "")
+                                                   " (ZU SPÄT: Frist %s)" % row["disclosure_deadline"] if row.get("late") else "")
     bits.append(when)
     if row.get("account"):
         bits.append("Konto: %s" % row["account"])

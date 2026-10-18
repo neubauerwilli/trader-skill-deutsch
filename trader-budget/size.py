@@ -62,6 +62,18 @@ class SizeError(Exception):
     pass
 
 
+def number(value, what):
+    try:
+        if isinstance(value, bool):
+            raise ValueError()
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise SizeError("%s muss eine endliche Zahl sein" % what)
+    if not math.isfinite(result):
+        raise SizeError("%s muss eine endliche Zahl sein" % what)
+    return result
+
+
 # ---------------------------------------------------------------- Eingaben
 
 def read_json(path, what):
@@ -77,7 +89,10 @@ def read_json(path, what):
 def load_config(path):
     cfg = dict(DEFAULTS)
     if path and os.path.exists(path):
-        cfg.update(read_json(path, "Konfiguration"))
+        data = read_json(path, "Konfiguration")
+        if not isinstance(data, dict):
+            raise SizeError("Konfiguration muss ein Objekt sein")
+        cfg.update(data)
     return cfg
 
 
@@ -104,11 +119,13 @@ def parse_weights(data):
         raise SizeError("weights muss eine Liste oder ein Objekt sein")
     out = []
     for r in rows:
-        try:
-            w = float(r["weight"])
-        except (TypeError, ValueError):
-            raise SizeError("Gewicht für %s ist keine Zahl: %r" % (r["ticker"], r["weight"]))
-        out.append({"ticker": str(r["ticker"]).strip().upper(), "name": r["name"] or "", "weight": w})
+        t = str(r["ticker"]).strip().upper()
+        if not t:
+            raise SizeError("Ticker darf nicht leer sein")
+        if r["name"] is not None and not isinstance(r["name"], str):
+            raise SizeError("Name für %s muss Text sein" % t)
+        w = number(r["weight"], "Gewicht für %s" % t)
+        out.append({"ticker": t, "name": r["name"] or "", "weight": w})
     return out
 
 
@@ -130,13 +147,15 @@ def load_prices(path):
     if not path:
         return {}
     data = read_json(path, "Kursdatei")
-    prices = data.get("prices", data) if isinstance(data, dict) else {}
+    prices = data.get("prices", data) if isinstance(data, dict) else None
+    if not isinstance(prices, dict):
+        raise SizeError("Kursdatei muss ein Objekt mit Kursen sein")
     out = {}
     for t, p in prices.items():
-        try:
-            out[str(t).upper()] = float(p)
-        except (TypeError, ValueError):
-            continue
+        p = number(p, "Kurs für %s" % t)
+        if p <= 0:
+            raise SizeError("Kurs für %s muss positiv sein" % t)
+        out[str(t).strip().upper()] = p
     return out
 
 
@@ -144,7 +163,8 @@ def load_prices(path):
 
 def normalise(rows, blocked=(), top=None):
     """Gesperrte und nicht positive Gewichte entfernen, die Top N behalten, auf 100 neu verteilen."""
-    blocked = {str(b).upper() for b in (blocked or [])}
+    rows = parse_weights(rows)
+    blocked = {str(b).strip().upper() for b in (blocked or [])}
     dropped, keep, seen = [], [], set()
     for r in rows:
         if r["ticker"] in seen:
@@ -162,9 +182,11 @@ def normalise(rows, blocked=(), top=None):
             dropped.append({"ticker": r["ticker"], "reason": "außerhalb der Top %d" % top})
         keep = keep[:top]
     total = sum(r["weight"] for r in keep)
+    if not math.isfinite(total):
+        raise SizeError("Summe der Gewichte ist zu groß")
     for r in keep:
         r["source_weight"] = r["weight"]
-        r["weight"] = 100.0 * r["weight"] / total if total else 0.0
+        r["weight"] = (r["weight"] / total) * 100.0 if total else 0.0
     return keep, dropped
 
 
@@ -179,7 +201,7 @@ def allocate(rows, investable, cap):
     money = investable
     while active:
         wsum = sum(r["weight"] for r in active)
-        trial = {r["ticker"]: money * r["weight"] / wsum for r in active}
+        trial = {r["ticker"]: money * (r["weight"] / wsum) for r in active}
         over = [r for r in active if trial[r["ticker"]] > cap + EPS]
         if not over:
             alloc.update(trial)
@@ -211,7 +233,7 @@ def round_to_unit(exact, capped, order, cap, unit):
     total_u = units(sum(exact.values()))
     out = {}
     for t, v in exact.items():
-        out[t] = cap_u if t in capped else int(math.floor(v / unit + 0.5 + EPS))
+        out[t] = cap_u if t in capped else min(cap_u, int(math.floor(v / unit + 0.5 + EPS)))
     diff = total_u - sum(out.values())
     takers = [t for t in order if t not in capped]
     guard = 0
@@ -261,27 +283,48 @@ def whole_shares(dollars, prices, order, cap, money):
 
 def size(rows, cfg, budget=None, prices=None, whole=None, cents=False, top=None):
     """Reine Funktion: Gewichte + Regeln -> das volle Ergebnis der Berechnung (ein Dict)."""
-    budget = float(budget if budget is not None else (cfg.get("budget") or 0))
+    if not isinstance(cfg, dict):
+        raise SizeError("Konfiguration muss ein Objekt sein")
+    if top is not None and (isinstance(top, bool) or not isinstance(top, int) or top <= 0):
+        raise SizeError("top muss eine positive ganze Zahl sein")
+    if not isinstance(cfg.get("fractional", True), bool):
+        raise SizeError("fractional muss true oder false sein")
+    if not isinstance(cfg.get("blocked", []), (list, tuple, set)):
+        raise SizeError("blocked muss eine Liste von Tickern sein")
+    budget = number(budget if budget is not None else (cfg.get("budget") or 0), "Budget")
     if budget <= 0:
         raise SizeError("kein Budget: gib --budget an oder setze \"budget\" in trader/config.json")
-    buf_pct = float(cfg.get("cash_buffer_pct", 10))
-    cap_pct = float(cfg.get("max_position_pct", 25))
-    min_order = float(cfg.get("min_order_usd", 5) or 0)
+    if not math.isfinite(budget * 100) or abs(budget * 100 - round(budget * 100)) > 1e-6:
+        raise SizeError("Budget muss sich als USD-Betrag mit höchstens zwei Nachkommastellen darstellen lassen")
+    buf_pct = number(cfg.get("cash_buffer_pct", 10), "cash_buffer_pct")
+    cap_pct = number(cfg.get("max_position_pct", 25), "max_position_pct")
+    min_order = number(cfg.get("min_order_usd", 5), "min_order_usd")
+    if min_order < 0:
+        raise SizeError("min_order_usd darf nicht negativ sein")
     if not 0 <= buf_pct < 100:
         raise SizeError("cash_buffer_pct muss zwischen 0 und 100 liegen")
     if not 0 < cap_pct <= 100:
         raise SizeError("max_position_pct muss über 0 und höchstens 100 liegen")
     if whole is None:
         whole = not cfg.get("fractional", True)
-    prices = prices or {}
+    if prices is not None and not isinstance(prices, dict):
+        raise SizeError("Kurse müssen ein Objekt sein")
+    prices = {str(t).strip().upper(): number(p, "Kurs für %s" % t) for t, p in (prices or {}).items()}
+    if any(p <= 0 for p in prices.values()):
+        raise SizeError("Kurse müssen positiv sein")
 
     keep, dropped = normalise(rows, cfg.get("blocked"), top)
     if not keep:
         raise SizeError("nichts zu berechnen: nach der Sperrliste sind keine Gewichte übrig")
 
-    cash_buffer = round(budget * buf_pct / 100.0, 2)
+    # Mindestreserve auf-, Höchstposition abrunden: ein Cent darf kein Limit brechen.
+    buffer_cents = budget * (buf_pct / 100.0) * 100
+    cap_cents = budget * (cap_pct / 100.0) * 100
+    if not math.isfinite(buffer_cents) or not math.isfinite(cap_cents):
+        raise SizeError("Budget ist für eine Berechnung in Cent zu groß")
+    cash_buffer = math.ceil(buffer_cents - EPS) / 100.0
     investable = round(budget - cash_buffer, 2)
-    cap = round(budget * cap_pct / 100.0, 2)
+    cap = math.floor(cap_cents + EPS) / 100.0
     unit = 0.01 if (cents or whole) else 1.0
 
     if whole:
@@ -295,7 +338,7 @@ def size(rows, cfg, budget=None, prices=None, whole=None, cents=False, top=None)
         live = [dict(r) for r in keep]
         tot = sum(r["source_weight"] for r in live)
         for r in live:
-            r["weight"] = 100.0 * r["source_weight"] / tot
+            r["weight"] = (r["source_weight"] / tot) * 100.0
         exact, capped = allocate(live, investable, cap)
         order = [r["ticker"] for r in sorted(live, key=lambda r: -exact[r["ticker"]])]
         dollars = round_to_unit(exact, capped, order, cap, unit)

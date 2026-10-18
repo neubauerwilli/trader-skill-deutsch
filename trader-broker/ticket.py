@@ -35,9 +35,11 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import sys
+import uuid
 
 ALPACA_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                  "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
@@ -73,7 +75,7 @@ def read_json(path, what, required=True):
     try:
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
-    except json.JSONDecodeError as e:
+    except (ValueError, OSError) as e:
         raise TicketError("%s ist kein gültiges JSON: %s" % (path, e))
 
 
@@ -83,13 +85,31 @@ def write_json(path, data):
         os.makedirs(d, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
+        json.dump(data, fh, indent=2, allow_nan=False)
         fh.write("\n")
     os.replace(tmp, path)
 
 
 def now_iso():
     return datetime.datetime.now().replace(microsecond=0).isoformat()
+
+
+def finite_number(value, label, positive=False):
+    try:
+        number = float(value) if not isinstance(value, bool) else float("nan")
+    except (TypeError, ValueError, OverflowError):
+        number = float("nan")
+    if not math.isfinite(number) or (number <= 0 if positive else number < 0):
+        raise TicketError("%s braucht eine endliche, %s Zahl" % (label, "positive" if positive else "nicht negative"))
+    return number
+
+
+def document_fingerprint(doc):
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def canonical_path(path):
+    return os.path.normcase(os.path.realpath(os.path.abspath(path)))
 
 
 def rec_day(rec):
@@ -110,7 +130,7 @@ def _str_num(v):
     if isinstance(v, bool):
         return v
     if isinstance(v, (int, float)):
-        f = float(v)
+        f = finite_number(v, "Auftragszahl", positive=True)
         return str(int(f)) if f == int(f) else repr(f)
     return str(v)
 
@@ -121,12 +141,19 @@ def tool_input(order):
     out = {}
     for k in ALPACA_FIELDS:
         if k in order and order[k] is not None:
+            if k in STRING_FIELDS:
+                finite_number(order[k], k, True)
             out[k] = _str_num(order[k]) if k in STRING_FIELDS else order[k]
     return out
 
 
 def _money(v):
-    f = float(v)
+    try:
+        f = float(v) if not isinstance(v, bool) else float("nan")
+    except (ValueError, TypeError, OverflowError):
+        f = float("nan")
+    if not math.isfinite(f):
+        raise TicketError("Betrag muss eine endliche Zahl sein")
     s = "{:,.2f}".format(f)
     return "$" + (s[:-3] if s.endswith(".00") else s)
 
@@ -173,31 +200,51 @@ def parse_yes(reply, order, batch_symbols=()):
     if "?" in raw:
         return False, "die Antwort ist eine Frage, kein Ja"
     words = re.findall(r"[a-zäöüß']+", raw.lower())
-    if not words or words[0] not in YES_WORDS:
+    if not words or words[0] not in YES_WORDS or not re.match(r"^(?:ja|yes|y)\b", raw.lower()):
         return False, "nur eine Antwort, die mit \"ja\" oder \"yes\" beginnt, zählt (nicht ok, passt, mach, sure, go); tippe ja"
     if BATCH_WORDS & set(words):
         return False, "ein Ja gilt für jeweils einen Auftrag, nicht für einen ganzen Stapel"
     if DOUBT_WORDS & set(words[1:]):
         return False, "die Antwort enthält eine Bedingung oder einen Zweifel; frag noch einmal"
     sym = str(order.get("symbol", "")).upper()
+    side = str(order.get("side", "")).lower()
+    buy_words, sell_words = {"buy", "kauf", "kaufe", "kaufen"}, {"sell", "verkauf", "verkaufe", "verkaufen"}
+    if (side == "buy" and sell_words & set(words)) or (side == "sell" and buy_words & set(words)):
+        return False, "die Antwort nennt die falsche Kauf-/Verkaufsseite"
     tokens = set(re.findall(r"[A-Z][A-Z.\-]{0,6}", raw.upper()))
     others = {s.upper() for s in batch_symbols} - {sym}
     named = tokens & others
     if named:
         return False, "die Antwort nennt %s, aber dieser Auftrag gilt für %s" % (", ".join(sorted(named)), sym)
-    nums = [float(n.replace(",", "")) for n in re.findall(r"\d[\d,]*(?:\.\d+)?", raw)]
+    permitted = {"place", "it", "es", "von", "of", "for", "für", "usd", "dollar", "aktie", "aktien", "shares", "stock", "zu", "at"}
+    permitted |= buy_words | sell_words | set(re.findall(r"[a-zäöüß']+", sym.lower()))
+    if set(words[1:]) - permitted:
+        return False, "die Antwort enthält zusätzliche oder unbekannte Angaben; tippe für dieses Ticket nur ja"
+    nums = [float(n.replace(",", "")) for n in re.findall(r"[-+]?\d[\d,]*(?:\.\d+)?", raw)]
     if nums:
         want = amount_numbers(order)
-        if not any(abs(n - w) < 0.005 for n in nums for w in want):
+        if not all(math.isfinite(n) and any(abs(n - w) < 0.005 for w in want) for n in nums):
             return False, "die Antwort sagt %s, aber dieser Auftrag lautet %s" % (
-                ", ".join(_str_num(n) for n in nums), plain(order))
+                ", ".join(str(n) for n in nums), plain(order))
     return True, "ausdrückliches Ja für %s" % plain(order)
 
 
 # ---------------------------------------------------------------- state
 
 def load_state(path):
-    return read_json(path, "broker state", required=False) or {"orders": []}
+    state = read_json(path, "broker state", required=False)
+    if state is None:
+        return {"orders": []}
+    if not isinstance(state, dict) or not isinstance(state.get("orders"), list) or any(not isinstance(r, dict) for r in state["orders"]):
+        raise TicketError("Broker-Stand muss ein Objekt mit einer Auftragsliste sein")
+    for rec in state["orders"]:
+        if (rec.get("status") not in ("approved", "declined", "placed", "denied", "failed")
+                or not isinstance(rec.get("fingerprint"), str)
+                or not re.fullmatch(r"[0-9a-f]{16}", rec["fingerprint"])
+                or isinstance(rec.get("index"), bool) or not isinstance(rec.get("index"), int)
+                or rec["index"] < 1):
+            raise TicketError("ungültiger Entscheidungsdatensatz im Broker-Stand")
+    return state
 
 
 def latest(state, fp, today):
@@ -209,38 +256,48 @@ def latest(state, fp, today):
     return found
 
 
-def risk_verdict(risk, fp, today):
+def risk_verdict(risk, fp, today, index=None):
     if not risk:
         return None, "trader-risiko hat diese Aufträge nicht geprüft (starte check.py)"
+    if risk.get("invalid_reason"):
+        return None, risk["invalid_reason"] + "; starte check.py erneut"
     if risk.get("date") != today:
         return None, "die Risikoprüfung ist vom %s, nicht von heute; starte check.py erneut" % risk.get("date")
     for r in risk.get("results", []):
-        if r.get("fingerprint") == fp:
+        if r.get("fingerprint") == fp and (index is None or r.get("index") == index):
             return r, None
     return None, "genau dieser Auftrag war nicht in der letzten Risikoprüfung (er wurde geändert oder ist neu); starte check.py erneut"
 
 
-def status_of(order, risk, state, today):
+def status_of(order, risk, state, today, index=None):
     """(ready, label, risk_result)"""
     fp = fingerprint(order)
-    rv, why = risk_verdict(risk, fp, today)
-    if rv is None:
-        return False, "NICHT BEREIT: " + why, None
-    if rv.get("verdict") != "PASS":
-        return False, "GESPERRT durch trader-risiko: " + "; ".join(rv.get("reasons", [])), rv
     rec = latest(state, fp, today)
     if rec:
         st = rec.get("status")
         if st == "approved":
-            return False, "FREIGEGEBEN von dir um %s, wartet auf den Aufruf von place_stock_order" % rec.get("at"), rv
-        return False, "ERLEDIGT: %s um %s" % (STATUS_WORDS.get(st, st), rec.get("at")), rv
+            return False, "FREIGEGEBEN von dir um %s, wartet auf das Ergebnis des Broker-Werkzeugs" % rec.get("at"), None
+        if st == "placed" or not risk or rec.get("risk_check_id") == risk.get("check_id"):
+            return False, "ERLEDIGT: %s um %s" % (STATUS_WORDS.get(st, st), rec.get("at")), None
+    rv, why = risk_verdict(risk, fp, today, index)
+    if rv is None:
+        return False, "NICHT BEREIT: " + why, None
+    if rv.get("verdict") != "PASS":
+        return False, "GESPERRT durch trader-risiko: " + "; ".join(rv.get("reasons", [])), rv
+    decisions = {}
+    for r in state.get("orders", []):
+        decisions[(r.get("fingerprint"), rec_day(r))] = r.get("status")
+    if "approved" in decisions.values():
+        return False, "NICHT BEREIT: eine andere Freigabe wartet noch auf ihr Broker-Ergebnis", rv
+    if "requires" not in rv or any(not (latest(state, prior, today) or {}).get("filled") for prior in rv["requires"]):
+        return False, "NICHT BEREIT: frühere PASS-Aufträge sind noch nicht ausgeführt; Kontostand aktualisieren und neu prüfen", rv
     return True, "BEREIT: trader-risiko PASS, wartet auf dein Ja", rv
 
 
 # ---------------------------------------------------------------- rendering
 
 def render(order, idx, total, cfg, risk, state, today):
-    ready, label, rv = status_of(order, risk, state, today)
+    ready, label, rv = status_of(order, risk, state, today, idx)
     broker = str(cfg.get("broker", "alpaca")).lower()
     paper = cfg.get("paper", True)
     acct = "PAPER-Konto (Spielgeld)" if paper else "LIVE-KONTO, ECHTES GELD"
@@ -259,14 +316,14 @@ def render(order, idx, total, cfg, risk, state, today):
         for l in json.dumps(tool_input(order), indent=2).splitlines():
             lines.append("    " + l)
     if ready:
-        lines.append("  Antworte \"yes\" (englisch getippt), um genau diesen einen Auftrag zu platzieren, oder \"no\", um ihn zu überspringen.")
+        lines.append("  Antworte \"ja\" (oder \"yes\") für genau diesen einen Auftrag, oder \"nein\", um ihn zu überspringen.")
         if broker != "ibkr":
             lines.append("  Claudes eigene Karte fragt danach noch einmal: Allow once platziert ihn, Deny stoppt ihn.")
     return "\n".join(lines), ready
 
 
 def ticket_json(order, idx, cfg, risk, state, today):
-    ready, label, rv = status_of(order, risk, state, today)
+    ready, label, rv = status_of(order, risk, state, today, idx)
     return {"index": idx, "ready": ready, "status": label, "plain": plain(order),
             "fingerprint": fingerprint(order), "paper": bool(cfg.get("paper", True)),
             "broker": cfg.get("broker", "alpaca"), "tool": "place_stock_order",
@@ -277,31 +334,58 @@ def ticket_json(order, idx, cfg, risk, state, today):
 
 def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
     """Trägt einen ausgeführten Auftrag in trader/portfolio.json ein (ein Lot bei einem Kauf, FIFO bei einem Verkauf)."""
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("paper", True), bool):
+        raise TicketError("Konfiguration und paper-Wert sind ungültig")
+    qty, price = finite_number(qty, "qty", True), finite_number(price, "price", True)
+    if side not in ("buy", "sell") or not isinstance(symbol, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9.\-]{0,24}", symbol):
+        raise TicketError("ungültiges Symbol oder side für die Ausführung")
+    try:
+        datetime.date.fromisoformat(date)
+    except (ValueError, TypeError):
+        raise TicketError("Ausführungsdatum muss JJJJ-MM-TT sein")
+    cost = qty * price
+    if not math.isfinite(cost):
+        raise TicketError("Wert der Ausführung läuft über")
+    cost = round(cost, 2)
     pf = read_json(portfolio_path, "portfolio", required=False)
     if pf is None:
         budget = cfg.get("budget")
-        if not budget:
+        if budget is None:
             raise TicketError("noch keine Datei %s und kein budget in der Config, um sie daraus zu starten" % portfolio_path)
-        pf = {"cash": float(budget), "positions": []}
+        pf = {"cash": finite_number(budget, "budget", True), "positions": []}
+    if not isinstance(pf, dict) or not isinstance(pf.get("positions"), list):
+        raise TicketError("Depot braucht eine Positionsliste")
+    cash = finite_number(pf.get("cash"), "Depot-Cash")
+    for p in pf["positions"]:
+        if not isinstance(p, dict) or not isinstance(p.get("lots", []), list):
+            raise TicketError("ungültige Depotposition")
+        finite_number(p.get("shares", 0), "Depot-Aktienzahl")
+        for lot in p.get("lots", []):
+            if not isinstance(lot, dict):
+                raise TicketError("ungültiger Kaufposten")
+            finite_number(lot.get("shares"), "Lot-Aktienzahl", True)
+            finite_number(lot.get("cost"), "Lot-Einstandswert")
     symbol = symbol.upper()
-    qty, price = float(qty), float(price)
-    cost = round(qty * price, 2)
     pos = None
     for p in pf.setdefault("positions", []):
         if str(p.get("ticker", "")).upper() == symbol:
             pos = p
     if side == "buy":
+        if cash + 0.005 < cost and cfg.get("allow_margin", False) is not True:
+            raise TicketError("Ausführung übersteigt den erfassten Cashbestand")
         if pos is None:
             pos = {"ticker": symbol, "shares": 0.0, "lots": []}
             pf["positions"].append(pos)
         lots = pos.setdefault("lots", [])
-        lots.append({"id": "%s-%d" % (symbol, len(lots) + 1), "date": date, "shares": qty, "cost": cost})
+        lots.append({"id": "%s-%s" % (symbol, uuid.uuid4().hex), "date": date, "shares": qty, "cost": cost})
         pos["shares"] = round(float(pos.get("shares", 0)) + qty, 6)
         pf["cash"] = round(float(pf.get("cash", 0)) - cost, 2)
     else:
         if pos is None or float(pos.get("shares", 0)) + 1e-9 < qty:
             raise TicketError("Verkauf von %s %s kann nicht eingetragen werden: das Depot hält %s"
                               % (qty, symbol, pos.get("shares", 0) if pos else 0))
+        if sum(float(l["shares"]) for l in pos.get("lots", [])) + 1e-9 < qty:
+            raise TicketError("Kaufposten reichen für diesen Verkauf nicht aus")
         left = qty
         for lot in sorted(pos.get("lots", []), key=lambda l: l.get("date", "")):
             if left <= 1e-9:
@@ -325,12 +409,49 @@ def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
 def _load(a):
     doc = read_json(a.orders, "Auftragsdatei (starte zuerst trader-budget, trader-ausgleich oder trader-steuer)")
     orders = doc.get("orders", doc) if isinstance(doc, dict) else doc
-    if not isinstance(orders, list) or not orders:
+    if not isinstance(orders, list) or not orders or any(not isinstance(o, dict) for o in orders):
         raise TicketError("keine Aufträge in %s" % a.orders)
-    cfg = read_json(a.config, "config", required=False) or {}
+    cfg = read_json(a.config, "config", required=False)
+    cfg = {} if cfg is None else cfg
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("paper", True), bool):
+        raise TicketError("Konfiguration muss ein Objekt und paper ein Boolean sein")
     risk = read_json(a.risk, "risk check", required=False)
     state = load_state(a.state)
     today = a.today or datetime.date.today().isoformat()
+    if risk is not None:
+        if not isinstance(risk, dict) or not isinstance(risk.get("results"), list) or any(not isinstance(r, dict) for r in risk["results"]):
+            raise TicketError("Risikoprüfung braucht eine Ergebnisliste")
+        for row in risk["results"]:
+            if (row.get("verdict") not in ("PASS", "BLOCK") or not isinstance(row.get("fingerprint"), str)
+                    or not isinstance(row.get("index"), int) or isinstance(row.get("index"), bool)
+                    or not isinstance(row.get("requires"), list)
+                    or any(not isinstance(prior, str) for prior in row["requires"])
+                    or any(not isinstance(row.get(key, []), list)
+                           or any(not isinstance(item, str) for item in row.get(key, []))
+                           for key in ("reasons", "warnings"))):
+                raise TicketError("ungültiges Ergebnis in der Risikoprüfung; starte check.py erneut")
+        if risk.get("config_fingerprint") != document_fingerprint(cfg):
+            risk["invalid_reason"] = "die Konfiguration wurde geändert oder ist nicht an diese Prüfung gebunden"
+        if risk.get("order_fingerprints") != [fingerprint(o) for o in orders]:
+            risk["invalid_reason"] = "genau dieser Auftrag war nicht in der letzten Risikoprüfung oder die Reihenfolge wurde geändert"
+        placed = [r for r in state["orders"] if r.get("status") == "placed"]
+        if (not isinstance(risk.get("broker_state_path"), str)
+                or canonical_path(risk["broker_state_path"]) != canonical_path(a.state)
+                or risk.get("broker_placed_fingerprint") != document_fingerprint(placed)):
+            risk["invalid_reason"] = "der Broker-Ausführungsstand wurde seit der Risikoprüfung geändert"
+        limit = finite_number(cfg.get("max_orders_per_day", 10), "max_orders_per_day")
+        if int(limit) != limit:
+            raise TicketError("max_orders_per_day muss eine endliche, nicht negative ganze Zahl sein")
+        if limit and sum(rec_day(r) == today for r in placed) >= limit:
+            risk["invalid_reason"] = "das aktuelle Tageslimit für platzierte Aufträge ist bereits erreicht"
+        if not isinstance(risk.get("inputs"), dict):
+            risk["invalid_reason"] = "der Eingabenachweis der Risikoprüfung fehlt"
+        for entry in (risk.get("inputs") if isinstance(risk.get("inputs"), dict) else {}).values():
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                raise TicketError("ungültiger Eingabenachweis der Risikoprüfung")
+            current = read_json(entry["path"], "Risikoeingabe", required=False)
+            if entry.get("fingerprint") != document_fingerprint(current):
+                risk["invalid_reason"] = "Kontodaten, Kurse oder Konfiguration wurden seit der Prüfung geändert"
     return orders, cfg, risk, state, today
 
 
@@ -363,7 +484,7 @@ def cmd_show(a):
 def cmd_approve(a):
     orders, cfg, risk, state, today = _load(a)
     order = _pick(orders, a.index)
-    ready, label, rv = status_of(order, risk, state, today)
+    ready, label, rv = status_of(order, risk, state, today, a.index)
     if not ready:
         raise TicketError("Auftrag %d ist nicht bereit: %s" % (a.index, label))
     ok, why = parse_yes(a.reply, order, [o.get("symbol", "") for o in orders])
@@ -373,7 +494,10 @@ def cmd_approve(a):
     rec = {"at": now_iso(), "date": today, "index": a.index, "fingerprint": fingerprint(order),
            "symbol": str(order.get("symbol", "")).upper(), "side": order.get("side"),
            "plain": plain(order), "status": "approved", "reply": a.reply,
-           "paper": bool(cfg.get("paper", True)), "broker": cfg.get("broker", "alpaca")}
+           "paper": bool(cfg.get("paper", True)), "broker": cfg.get("broker", "alpaca"),
+           "risk_check_id": risk.get("check_id"),
+           "portfolio_binding": risk.get("inputs", {}).get("portfolio"),
+           "config_fingerprint": document_fingerprint(cfg)}
     state.setdefault("orders", []).append(rec)
     write_json(a.state, state)
     print("Dein Ja zu Auftrag %d ist erfasst: %s." % (a.index, plain(order)))
@@ -392,7 +516,8 @@ def cmd_decline(a):
     order = _pick(orders, a.index)
     rec = {"at": now_iso(), "date": today, "index": a.index, "fingerprint": fingerprint(order),
            "symbol": str(order.get("symbol", "")).upper(), "side": order.get("side"),
-           "plain": plain(order), "status": "declined", "reply": a.reply or "no"}
+           "plain": plain(order), "status": "declined", "reply": a.reply or "no",
+           "risk_check_id": (risk or {}).get("check_id")}
     state.setdefault("orders", []).append(rec)
     write_json(a.state, state)
     print("Erfasst: Du hast Nein zu Auftrag %d (%s) gesagt. Es wurde nichts abgeschickt." % (a.index, plain(order)))
@@ -404,19 +529,44 @@ def cmd_result(a):
     order = _pick(orders, a.index)
     fp = fingerprint(order)
     rec = latest(state, fp, today)
-    if not rec or rec.get("status") != "approved":
+    if not rec or rec.get("status") != "approved" or rec.get("index") != a.index:
         raise TicketError("zu Auftrag %d ist heute kein Ja erfasst; ein Ergebnis kann nur auf eine Freigabe folgen" % a.index)
+    if a.status == "placed" and not a.broker_id:
+        raise TicketError("placed braucht die tatsächliche Broker-Auftrags-ID")
+    if bool(a.filled_qty) != bool(a.filled_price):
+        raise TicketError("filled-qty und filled-price müssen zusammen angegeben werden")
+    if a.filled_qty is not None:
+        binding = rec.get("portfolio_binding")
+        if (not isinstance(binding, dict) or not isinstance(binding.get("path"), str)
+                or canonical_path(binding["path"]) != canonical_path(a.portfolio)):
+            raise TicketError("Ausführung gehört ausschließlich in die bei der Freigabe geprüfte Depotdatei")
+        if (rec.get("config_fingerprint") != document_fingerprint(cfg)
+                or binding.get("fingerprint") != document_fingerprint(
+                    read_json(a.portfolio, "gebundene Depotdatei", required=False))):
+            raise TicketError("Konfiguration oder Depot wurde nach der Freigabe geändert; Ausführung zuerst abgleichen")
+        filled_qty = finite_number(a.filled_qty, "filled-qty", True)
+        filled_price = finite_number(a.filled_price, "filled-price", True)
+        if a.status != "placed":
+            raise TicketError("Ausführungsdaten gehören nur zu placed")
+        if order.get("qty") is not None and filled_qty > finite_number(order["qty"], "Auftragsmenge", True) + 1e-9:
+            raise TicketError("Ausführungsmenge übersteigt die freigegebene Auftragsmenge")
+        if order.get("notional") is not None and filled_qty * filled_price > finite_number(order["notional"], "Auftragsbetrag", True) + 0.01:
+            raise TicketError("Ausführungswert übersteigt den freigegebenen Auftragsbetrag")
     new = {"at": now_iso(), "date": today, "index": a.index, "fingerprint": fp, "symbol": rec["symbol"],
-           "side": rec["side"], "plain": rec["plain"], "status": a.status}
+           "side": rec["side"], "plain": rec["plain"], "status": a.status,
+           "risk_check_id": rec.get("risk_check_id"), "paper": rec.get("paper", True),
+           "broker": rec.get("broker", "alpaca")}
     if a.broker_id:
         new["broker_order_id"] = a.broker_id
     if a.note:
         new["note"] = a.note
+    if a.filled_qty is not None:
+        apply_fill(a.portfolio, cfg, rec["symbol"], rec["side"], a.filled_qty, a.filled_price, today)
+        new["filled"] = True
     state["orders"].append(new)
     write_json(a.state, state)
     print("Auftrag %d als %s erfasst." % (a.index, a.status))
     if a.status == "placed" and a.filled_qty and a.filled_price:
-        apply_fill(a.portfolio, cfg, rec["symbol"], rec["side"], a.filled_qty, a.filled_price, today)
         print("Die Ausführung wurde in %s eingetragen." % a.portfolio)
     elif a.status == "placed":
         print("Sobald er ausgeführt ist, trag ihn für trader-steuer ein: ticket.py fill --symbol %s --side %s --qty Q --price P"

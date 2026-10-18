@@ -20,6 +20,9 @@ argument-hint: "[Ticker] [Kurs]"
 
 # trader-alarm
 
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
+
 Kursalarme beobachtet die Zahlen, damit du es nicht tun musst. Ein Alarm ist
 eine Information, nie ein Auftrag: Wenn ein Stopp läutet, wird nichts verkauft.
 Willst du handeln, läuft der normale Weg (Größe, Risiko, dein Ja).
@@ -83,25 +86,25 @@ und an diesen Feiertagen, laut nyse.com/markets/hours-calendars (gelesen am 13.1
   6. Sep, 25. Nov, 24. Dez (Weihnachten, vorgezogen). Früh-Schluss um 13:00 Uhr am 26. Nov.
 
 Die Sommerzeit rechnet das Tool selbst aus, es braucht also keine
-Zeitzonen-Dateien. Für jedes andere Jahr sagt es, dass die Feiertagsliste unbekannt ist.
+Zeitzonen-Dateien. Außerhalb 2026/2027 ist der Handelsstatus unbekannt: keine bestätigte Öffnung, kein Eröffnungsglocken-Alarm und keine erfundene nächste Öffnung. Eine wegen der Sommerzeitumstellung nicht existierende New Yorker Ortszeit wird abgelehnt; gib bei unklarer Ortszeit einen ausdrücklichen UTC-Offset an.
 
 ## Schritte
 
 1. Frag, was beobachtet werden soll, in den Worten des Nutzers ("sag mir
-   Bescheid, wenn Apple unter $320 fällt"), und leg die Regel an. Bestätige sie
+   Bescheid, wenn Apple unter 320 USD fällt"), und leg die Regel an. Bestätige sie
    zurück: Ticker, Typ, Marke.
 2. Führe `check` jetzt aus, und nach Zeitplan, wenn der Nutzer das will (eine
    geplante Aufgabe in Claude oder Cron, zu Handelszeiten alle 15 Minuten ist
    reichlich). Jeder Lauf holt nur die Ticker aus den Regeln und läutet jeden
    Alarm einmal.
 3. Sag dem Nutzer, was geläutet hat, eine Zeile je Alarm. Will er handeln,
-   schick ihn zur Größenberechnung und zu `/trader-risiko`. Handle nie für ihn.
+   schick ihn zur Größenberechnung und zu `/trader-skill-deutsch:trader-risiko`. Handle nie für ihn.
 
 ## Beispiel: das Depot aus dem Reel
 
 Nachdem das Kopie-Depot gekauft ist: `add --opening-bell`, `add --symbol AAPL
 --above 350` und `add --symbol BAC --stop 50`. Am 13.10.2026 schloss AAPL bei
-$341.27 und BAC bei $53.96, also druckt `check` an diesem Abend "Nichts getroffen"
+341.27 USD und BAC bei 53.96 USD, also druckt `check` an diesem Abend "Nichts getroffen"
 und endet mit Exit 1. Um 9:30 Uhr am nächsten Morgen läutet die Eröffnungsglocke einmal.
 
 ## Was er nie tut

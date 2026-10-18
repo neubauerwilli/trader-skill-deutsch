@@ -47,6 +47,18 @@ class RebalanceError(Exception):
     pass
 
 
+def number(value, what, minimum=0):
+    try:
+        if isinstance(value, bool):
+            raise ValueError()
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise RebalanceError("%s muss eine endliche Zahl sein" % what)
+    if not math.isfinite(result) or result < minimum:
+        raise RebalanceError("%s muss endlich und mindestens %s sein" % (what, minimum))
+    return result
+
+
 def read_json(path, what, required=True):
     if not path or not os.path.exists(path):
         if required:
@@ -76,16 +88,26 @@ def parse_targets(doc, blocked=()):
     out = {}
     if isinstance(rows, dict):
         rows = [{"ticker": k, "weight": v} for k, v in rows.items()]
-    blocked = {str(b).upper() for b in blocked or []}
+    if not isinstance(rows, list):
+        raise RebalanceError("Zielgewichte müssen eine Liste oder ein Objekt sein")
+    if blocked is not None and not isinstance(blocked, (list, tuple, set)):
+        raise RebalanceError("blocked muss eine Liste von Tickern sein")
+    blocked = {str(b).strip().upper() for b in blocked or []}
     for r in rows or []:
-        t = str(r.get("ticker") or r.get("symbol") or "").upper()
-        w = float(r.get("weight", 0) or 0)
+        if not isinstance(r, dict):
+            raise RebalanceError("jedes Zielgewicht muss ein Objekt sein")
+        t = str(r.get("ticker") or r.get("symbol") or "").strip().upper()
+        if not t:
+            raise RebalanceError("Zielgewicht braucht einen Ticker")
+        w = number(r.get("weight", 0), "Gewicht für %s" % t)
         if t and w > 0 and t not in blocked:
             out[t] = out.get(t, 0.0) + w
     tot = sum(out.values())
+    if not math.isfinite(tot):
+        raise RebalanceError("Summe der Gewichte ist zu groß")
     if not tot:
         raise RebalanceError("keine Zielgewichte (starte trader-kopie oder schreib trader/targets.json)")
-    return {t: 100.0 * w / tot for t, w in out.items()}
+    return {t: (w / tot) * 100.0 for t, w in out.items()}
 
 
 def capped_targets(weights, sleeve, cap):
@@ -93,7 +115,7 @@ def capped_targets(weights, sleeve, cap):
     alloc, active, money_left = {}, dict(weights), sleeve
     while active:
         wsum = sum(active.values())
-        trial = {t: money_left * w / wsum for t, w in active.items()}
+        trial = {t: money_left * (w / wsum) for t, w in active.items()}
         over = [t for t, v in trial.items() if v > cap + EPS]
         if not over:
             alloc.update(trial)
@@ -111,24 +133,39 @@ def capped_targets(weights, sleeve, cap):
 
 def holdings_of(portfolio):
     out = {}
+    if not isinstance(portfolio, dict) or not isinstance(portfolio.get("positions", []), list):
+        raise RebalanceError("Depot muss ein Objekt mit einer Positionsliste sein")
     for p in (portfolio or {}).get("positions", []):
-        t = str(p.get("ticker") or p.get("symbol") or "").upper()
+        if not isinstance(p, dict):
+            raise RebalanceError("jede Position muss ein Objekt sein")
+        t = str(p.get("ticker") or p.get("symbol") or "").strip().upper()
         if not t:
-            continue
+            raise RebalanceError("Position braucht einen Ticker")
         n = p.get("shares", p.get("qty"))
         if n is None:
-            n = sum(float(l.get("shares", 0)) for l in p.get("lots", []))
-        out[t] = out.get(t, 0.0) + float(n)
+            lots = p.get("lots", [])
+            if not isinstance(lots, list) or any(not isinstance(l, dict) for l in lots):
+                raise RebalanceError("Lots müssen eine Liste von Objekten sein")
+            n = sum(number(l.get("shares", 0), "Lot-Stückzahl") for l in lots)
+        out[t] = out.get(t, 0.0) + number(n, "Stückzahl für %s" % t)
     return out
 
 
 def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
     """Reine Funktion: die Abweichungstabelle und die vorgeschlagenen Trades."""
     c = dict(DEFAULTS)
+    if cfg is not None and not isinstance(cfg, dict):
+        raise RebalanceError("Konfiguration muss ein Objekt sein")
     c.update(cfg or {})
-    band = float(c["rebalance_band_pct"] if band is None else band)
-    cash = float((portfolio or {}).get("cash", 0) or 0)
+    band = number(c["rebalance_band_pct"] if band is None else band, "Band")
+    if not isinstance(portfolio, dict):
+        raise RebalanceError("Depot muss ein Objekt sein")
+    cash = number(portfolio.get("cash", 0), "Bargeld")
     held = holdings_of(portfolio)
+    weights = parse_targets(weights, c.get("blocked"))
+    if not isinstance(prices, dict):
+        raise RebalanceError("Kurse müssen ein Objekt sein")
+    prices = {str(t).strip().upper(): number(p, "Kurs für %s" % t) for t, p in prices.items()}
     need = sorted(set(held) | set(weights), key=lambda t: (-weights.get(t, 0.0), t))
     missing = [t for t in need if not prices.get(t)]
     if missing:
@@ -136,20 +173,29 @@ def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
                              % (", ".join(missing), " ".join(missing)))
     value = {t: held.get(t, 0.0) * prices[t] for t in need}
     total = cash + sum(value.values())
-    if total <= 0:
+    if not math.isfinite(total) or total <= 0:
         raise RebalanceError("das Depot ist leer: nichts auszugleichen (trader-budget berechnet einen ersten Kauf)")
-    buf = total * float(c["cash_buffer_pct"]) / 100.0
-    cap = total * float(c["max_position_pct"]) / 100.0
+    buf_pct = number(c["cash_buffer_pct"], "cash_buffer_pct")
+    cap_pct = number(c["max_position_pct"], "max_position_pct")
+    if not 0 <= buf_pct < 100 or not 0 < cap_pct <= 100 or band > 100:
+        raise RebalanceError("ungültiges Prozentlimit oder Band (0 bis 100)")
+    if not isinstance(c.get("fractional", True), bool):
+        raise RebalanceError("fractional muss true oder false sein")
+    buf = total * (buf_pct / 100.0)
+    cap = total * (cap_pct / 100.0)
     target = capped_targets(weights, total - buf, cap)
     whole = not c.get("fractional", True)
-    min_o, max_o = float(c.get("min_order_usd") or 0), float(c.get("max_order_usd") or 0)
+    min_o = number(c.get("min_order_usd", 0), "min_order_usd")
+    max_o = number(c.get("max_order_usd", 0), "max_order_usd")
+    if max_o and min_o > max_o:
+        raise RebalanceError("Mindestauftrag darf den Höchstauftrag nicht übersteigen")
 
     rows, sells, buys, notes = [], [], [], []
     for t in need:
         tracked = t in weights
         tgt = target.get(t, 0.0)
-        cur_pct = 100.0 * value[t] / total
-        tgt_pct = 100.0 * tgt / total
+        cur_pct = (value[t] / total) * 100.0
+        tgt_pct = (tgt / total) * 100.0
         drift = cur_pct - tgt_pct
         row = {"ticker": t, "shares": round(held.get(t, 0.0), 6), "price": prices[t], "value": round(value[t], 2),
                "current_pct": round(cur_pct, 2), "target_pct": round(tgt_pct, 2),
@@ -159,7 +205,7 @@ def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
         if not tracked:
             if sell_untracked and held.get(t, 0) > EPS:
                 sells.append({"ticker": t, "usd": value[t], "qty": held[t], "all": True,
-                              "why": "steht nicht in deinen Zielen; die ganze Position wird verkauft (--sell-untracked)"})
+                              "why": "steht nicht in deinen Zielen; verkaufbare Stücke nach Limits und Präzision (--sell-untracked)"})
                 row["action"] = "alles verkaufen"
             else:
                 row["action"] = "nicht im Ziel, bleibt liegen"
@@ -180,15 +226,11 @@ def plan(portfolio, prices, weights, cfg, band=None, sell_untracked=False):
     for s in sells:
         p = prices[s["ticker"]]
         usd = s["usd"]
-        if max_o and usd > max_o + EPS and not s["all"]:
+        if max_o and usd > max_o + EPS:
             notes.append("%s Verkauf auf deinen Höchstauftrag von %s gekürzt; nach der Ausführung nochmal laufen lassen" % (s["ticker"], money(max_o)))
             usd = max_o
-        if s["all"]:
-            qty = s["qty"]
-        else:
-            qty = usd / p
-            qty = math.floor(qty + EPS) if whole else math.floor(qty * 10000 + EPS) / 10000.0
-            qty = min(qty, held[s["ticker"]])
+        qty = min(usd / p, held[s["ticker"]])
+        qty = math.floor(qty + EPS) if whole else math.floor(qty * 10000 + EPS) / 10000.0
         if qty <= EPS or qty * p < min_o - EPS:
             notes.append("%s Verkauf über %s liegt unter deinem Mindestauftrag von %s: übersprungen"
                          % (s["ticker"], money(qty * p), money(min_o)))
@@ -260,7 +302,8 @@ def report(res):
                                                              o["time_in_force"], money(o["_usd"])))
         lines.append("Bargeld danach, wenn alle ausgeführt werden: etwa %s." % money(res["cash_after"]))
     else:
-        lines.append("Nichts liegt außerhalb des Bands. Keine Trades.")
+        lines.append("Keine ausführbaren Vorschläge; beachte die Hinweise zu Limits und Mindestaufträgen."
+                     if res["notes"] else "Nichts liegt außerhalb des Bands. Keine Trades.")
     for n in res["notes"]:
         lines.append("Hinweis: " + n)
     lines.append("")
@@ -284,10 +327,13 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         cfg = read_json(a.config, "Konfiguration", required=False) or {}
+        if not isinstance(cfg, dict):
+            raise RebalanceError("Konfiguration muss ein Objekt sein")
         portfolio = read_json(a.portfolio, "Depot (deine Positionen und dein Bargeld)")
         pdoc = read_json(a.prices, "Kurse (trader-alarm: alerts.py quote --holdings --write)")
-        prices = {str(k).upper(): float(v) for k, v in (pdoc.get("prices", pdoc) or {}).items()
-                  if isinstance(v, (int, float))}
+        if not isinstance(pdoc, dict) or not isinstance(pdoc.get("prices", pdoc), dict):
+            raise RebalanceError("Kursdatei muss ein Objekt mit Kursen sein")
+        prices = pdoc.get("prices", pdoc)
         weights = parse_targets(read_json(a.targets, "Ziele"), cfg.get("blocked"))
         res = plan(portfolio, prices, weights, cfg, a.band, a.sell_untracked)
         if a.write and res["orders"]:

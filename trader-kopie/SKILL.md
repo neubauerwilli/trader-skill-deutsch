@@ -18,6 +18,9 @@ argument-hint: "[Investor, Fonds oder CIK] [--top N]"
 
 # trader-kopie
 
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
+
 Einen Investor zu kopieren beginnt mit dem, was er gesetzlich offenlegen muss:
 eine 13F-HR, die jeder Vermögensverwalter mit über 100 Millionen Dollar in
 US-börsennotierten Aktien und anderen 13(f)-Wertpapieren jedes Quartal bei der
@@ -53,6 +56,7 @@ Reel-Laufs (Berkshire, Top 5).
 
 ## Die Regeln
 
+- **Bestandsänderungen sind keine Transaktionsliste.** Eine höhere Stückzahl kann auch aus einem Split oder einer anderen Kapitalmaßnahme stammen. Nenne den Quartalsvergleich und bezeichne ihn ohne zusätzlichen Beleg nicht als tatsächlich erfolgten Kauf oder Verkauf.
 - **Sag jedes Mal, wie alt die Daten sind.** Eine 13F ist eine Momentaufnahme
   vom letzten Tag des Quartals, bis zu 45 Tage später eingereicht. Schreib in
   jede Antwort, die eine nutzt: "Bestand zum 2026-06-30, eingereicht
@@ -100,8 +104,8 @@ Tochterfirmen), prüft die Summe gegen das Deckblatt und ordnet Ticker zu:
 zuerst deine `trader/tickers.json`, dann `share_classes.json` (geprüfte CUSIPs
 für Firmen mit mehreren börsennotierten Gattungen), dann die
 `company_tickers.json` der SEC nach Namen und mit `--figi` die kostenlose
-CUSIP-Suche von OpenFIGI. `--combine` addiert Aktiengattungen einer Firma
-(Alphabet A + C). Gibt es für das Quartal eine Änderungsmeldung, sagt das
+CUSIP-Suche von OpenFIGI. `--combine` addiert ausdrücklich als Klasse/Serie bezeichnete Aktiengattungen einer Firma
+(Alphabet A + C). Verschiedene ETF-Produkte desselben Trusts bleiben getrennt. Gibt es für das Quartal eine Änderungsmeldung, sagt das
 Werkzeug es; lies sie mit `--accession`.
 
 ## Schritt 3: was sich geändert hat
@@ -125,7 +129,7 @@ Aktiengattungen werden standardmäßig zusammengefasst (`--separate` hält sie
 getrennt). `--exclude TICKER` lässt weg, was der Nutzer nicht besitzen will,
 `--min-pct 1` streicht Kleinstpositionen. Die Gewichte sind der %-Anteil jeder
 Position an der 13F, so skaliert, dass die gewählten zusammen 100 ergeben. Zeig
-die Tabelle und übergib dann an `/trader-budget`.
+die Tabelle. Prüfe Positionen mit `check_ticker: true` zuerst anhand der CUSIP und einer Originalquelle; ein Namens- oder Tickerpräfix ist kein sicherer Gattungsnachweis. Korrigiere sie gegebenenfalls in `trader/tickers.json`, bevor du an `/trader-skill-deutsch:trader-budget` übergibst.
 
 Form 4 (optional): Insider und Besitzer von mehr als 10 % melden ihre Geschäfte
 innerhalb von zwei Börsentagen per Form 4. Um sie zu sehen, öffne
@@ -138,7 +142,7 @@ einmal ab.
 
 "Kopier Berkshire Hathaway, Top 5." Die neueste 13F-HR gilt für das Quartal bis
 2026-06-30, eingereicht 2026-08-14, Accession 0001193125-26-352200, Summe
-$299,253,556,246 (stimmt mit dem Deckblatt überein).
+299,253,556,246 USD (stimmt mit dem Deckblatt überein).
 
 | # | Position | % der 13F | Kopiergewicht |
 | --- | --- | --- | --- |
@@ -153,7 +157,7 @@ D.R. Horton (3,564 Aktien), ganz verkauft Constellation Brands, aufgestockt
 Alphabet, Delta, Lennar, Macy's und die New York Times, reduziert Bank of
 America, Kroger, Capital One, Nucor, Ally und DaVita. Dann: "Das ist der
 Bestand von Berkshire zum 30. Juni 2026. Als Nächstes schneidet
-`/trader-budget` ihn auf deine $5,000 zu."
+`/trader-skill-deutsch:trader-budget` ihn auf deine 5,000 USD zu."
 
 ## Was er nie tut
 
@@ -171,8 +175,8 @@ Bestand von Berkshire zum 30. Juni 2026. Als Nächstes schneidet
   Empfehlung, irgendetwas zu kaufen oder zu verkaufen.
 - Standardmäßig Paper Trading, also Spielgeld (`"paper": true` in
   `trader/config.json`).
-- Nichts schickt einen Auftrag ab außer `/trader-broker`, und das nur, wenn
-  `/trader-risiko` bestanden hat UND der Nutzer im Chat für genau diesen
+- Nichts schickt einen Auftrag ab außer `/trader-skill-deutsch:trader-broker`, und das nur, wenn
+  `/trader-skill-deutsch:trader-risiko` bestanden hat UND der Nutzer im Chat für genau diesen
   Auftrag ausdrücklich "Ja" schreibt (nichts ohne dein "Ja"), UND das
   Broker-Werkzeug in Claude auf "Needs approval" steht (Customize >
   Connectors > tool permissions), sodass auch Claudes eigene Karte "Allow

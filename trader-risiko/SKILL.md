@@ -11,11 +11,14 @@ description: >-
   nur einen Auftrag zeigt, der bestanden hat. Nutze ihn, wenn der Nutzer sagt:
   "prüf meine Aufträge", "check my orders", "ist das sicher", "is this safe",
   "Risikoprüfung", "risk check", "bricht das meine Regeln", "darf ich das
-  abschicken", "can I place this", oder immer vor /trader-broker.
+  abschicken", "can I place this", oder immer vor /trader-skill-deutsch:trader-broker.
 argument-hint: "[Pfad zur orders.json]"
 ---
 
 # trader-risiko
+
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
 
 Der Risiko-Wächter ist die Schranke zwischen einem Vorschlag und dem Broker.
 Jeder Auftrag, den trader-budget, trader-ausgleich oder trader-steuer
@@ -60,9 +63,15 @@ ist, zusammen aber eine Regel bricht.
 | Doppelt | dasselbe Symbol mit derselben Seite zweimal in einem Stapel, oder heute schon abgeschickt |
 | Tageslimit | mehr als `max_orders_per_day` Aufträge heute abgeschickt |
 
-Warnungen blocken nicht, aber sag sie dem Nutzer: ein LIVE-Konto, eine Zahl,
-die als Zahl statt als String geschickt wurde, ein erweiterter Auftrag
-(Bracket).
+Zahlen müssen endlich sein: NaN, Infinity, Booleans und negative Größen sind
+keine gültigen Beträge. Fehlerhafte Konfiguration, Kurse oder Depotdaten
+führen zu einem Fehler statt zu einem PASS. Erweiterte Aufträge (etwa Bracket)
+werden blockiert, solange nicht alle Teilaufträge geprüft werden können.
+Standard-Aktienoptionen werden, falls ausdrücklich erlaubt, mit 100 Aktien je
+Kontrakt bewertet; angepasste Kontrakte sind damit nicht abgedeckt.
+
+Warnungen blocken nicht, aber sag sie dem Nutzer: ein LIVE-Konto und eine Zahl,
+die als Zahl statt als String geschickt wurde.
 
 ## Schritte
 
@@ -75,29 +84,34 @@ die als Zahl statt als String geschickt wurde, ein erweiterter Auftrag
    bei einem BLOCK den Grund und die Lösung an (ein kleinerer Betrag, eine
    andere Aktie oder eine Regel, die der Nutzer vielleicht ändern will). Ändere
    nie selbst ein Limit.
-4. Ändern sich die Aufträge in irgendeiner Weise, starte die Prüfung erneut.
-   trader-broker ordnet jeden Auftrag per Fingerabdruck seinem Urteil zu: Ein
-   geänderter Auftrag ist erst bereit, wenn er wieder besteht, und ein Urteil
-   von gestern zählt heute nicht.
+4. Ändern sich Aufträge, Reihenfolge, Regeln, Kontodaten oder Kurse, starte die
+   Prüfung erneut. Das Urteil speichert die geprüften Eingaben und die
+   Reihenfolge. Ein Urteil von gestern zählt heute nicht. Frühere PASS-Aufträge
+   wurden im Stapel als ausgeführt gerechnet: Ziehe einen späteren Auftrag
+   deshalb nicht vor. Warte auf die tatsächliche Ausführung, aktualisiere das
+   Depot und prüfe erneut; ein nur abgeschickter Verkauf ist noch kein Geld.
+   Nach Ablehnung oder Fehlschlag den verbleibenden Stapel ebenfalls neu
+   prüfen. Fehlende oder beschädigte Eingaben nicht durch erfundene Werte
+   ersetzen.
 
 ## Beispiel: das Reel
 
-Die fünf Käufe von trader-budget (AAPL $1,250, AXP $1,119, GOOGL $823, KO
-$708, BAC $600) auf einem frischen $5,000-Paper-Konto mit der Beispiel-
+Die fünf Käufe von trader-budget (AAPL 1,250 USD, AXP 1,119 USD, GOOGL 823 USD, KO
+708 USD, BAC 600 USD) auf einem frischen 5,000 USD-Paper-Konto mit der Beispiel-
 Konfiguration:
 
 ```
-PASS  #1 buy AAPL $1,250
-PASS  #2 buy AXP $1,119
-PASS  #3 buy GOOGL $823
-PASS  #4 buy KO $708
-PASS  #5 buy BAC $600
-5 bestanden, 0 geblockt. Bargeld nach den bestandenen Aufträgen: $500 (Paper-Konto).
+PASS  #1 buy AAPL 1,250 USD
+PASS  #2 buy AXP 1,119 USD
+PASS  #3 buy GOOGL 823 USD
+PASS  #4 buy KO 708 USD
+PASS  #5 buy BAC 600 USD
+5 bestanden, 0 geblockt. Bargeld nach den bestandenen Aufträgen: 500 USD (Paper-Konto).
 ```
 
-AAPL landet genau auf der 25-%-Obergrenze ($1,250 von $5,000), und das ist
-erlaubt. Ein sechster Auftrag, noch einmal $100 AAPL, wird auf drei Wegen
-geblockt: Er würde in den Bargeldpuffer von $500 greifen, AAPL über die
+AAPL landet genau auf der 25-%-Obergrenze (1,250 USD von 5,000 USD), und das ist
+erlaubt. Ein sechster Auftrag, noch einmal 100 USD AAPL, wird auf drei Wegen
+geblockt: Er würde in den Bargeldpuffer von 500 USD greifen, AAPL über die
 25-%-Obergrenze heben und AAPL im selben Stapel wiederholen.
 
 ## Was er nie tut

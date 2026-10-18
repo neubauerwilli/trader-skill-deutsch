@@ -56,6 +56,14 @@ class ExplicitYes(unittest.TestCase):
         self.assertTrue(self.yes("yes sell 3 KO", sell))
         self.assertFalse(self.yes("yes sell 4", sell))
 
+    def test_wrong_side_unknown_ticker_and_mixed_amounts_are_not_approval(self):
+        for reply in ("ja verkaufe AAPL", "yes sell AAPL", "ja TSLA", "ja 1250 und 500",
+                      "yes 1250 500", "ja -1250", "ja morgen", "ja Auftrag 2", "ja1250"):
+            with self.subTest(reply=reply):
+                self.assertFalse(self.yes(reply))
+        limit = {"symbol": "KO", "side": "buy", "qty": "3", "type": "limit", "limit_price": "95"}
+        self.assertFalse(self.yes("yes buy 4 KO at 95", limit))
+
 
 class TicketShape(unittest.TestCase):
     def test_tool_input_is_the_alpaca_call(self):
@@ -228,6 +236,41 @@ class Flow(unittest.TestCase):
         code, _, err = run(["fill", "--symbol", "KO", "--side", "sell", "--qty", "5", "--price", "90",
                             "--portfolio", self.pf, "--config", self.cfg])
         self.assertEqual(code, 1)
+
+
+class InvalidFill(unittest.TestCase):
+    def test_new_fill_does_not_reuse_surviving_lot_id(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "portfolio.json")
+            portfolio = {"cash": 1000, "positions": [{"ticker": "KO", "shares": 1,
+                         "lots": [{"id": "KO-2", "date": "2025-01-01", "shares": 1, "cost": 50}]}]}
+            with open(path, "w", encoding="utf-8") as stream:
+                json.dump(portfolio, stream)
+            result = ticket.apply_fill(path, {"paper": True}, "KO", "buy", 1, 60, TODAY)
+            identifiers = [lot["id"] for lot in result["positions"][0]["lots"]]
+            self.assertEqual(len(identifiers), len(set(identifiers)))
+
+    def test_invalid_fill_leaves_existing_portfolio_untouched(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "portfolio.json")
+            original = '{"cash":1000,"positions":[]}'
+            with open(path, "w", encoding="utf-8") as stream:
+                stream.write(original)
+            for qty, price in (("NaN", "10"), ("1", "Infinity"), ("-1", "10"),
+                               (True, "10"), ("1e308", "1e308")):
+                with self.subTest(qty=qty, price=price), self.assertRaises(ticket.TicketError):
+                    ticket.apply_fill(path, {"paper": True}, "KO", "buy", qty, price, TODAY)
+                with open(path, encoding="utf-8") as stream:
+                    self.assertEqual(stream.read(), original)
+
+    def test_bad_shapes_are_clean_cli_errors(self):
+        with tempfile.TemporaryDirectory() as folder:
+            orders = os.path.join(folder, "orders.json")
+            with open(orders, "w") as stream:
+                json.dump({"orders": [None]}, stream)
+            code, _, error = run(["show", "--orders", orders])
+            self.assertEqual(code, 1)
+            self.assertIn("keine Aufträge", error)
 
 
 if __name__ == "__main__":

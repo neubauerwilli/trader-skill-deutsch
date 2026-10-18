@@ -41,6 +41,7 @@ Die Regeln, die es anwendet (US-Bundessteuer, nur die Rechnung):
 import argparse
 import datetime
 import json
+import math
 import os
 import sys
 
@@ -51,6 +52,24 @@ EPS = 1e-9
 
 class TaxError(Exception):
     pass
+
+
+def number(value, what, positive=False):
+    try:
+        if isinstance(value, bool):
+            raise ValueError()
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise TaxError("%s muss eine endliche Zahl sein" % what)
+    if not math.isfinite(result) or result < 0 or (positive and result == 0):
+        raise TaxError("%s muss endlich und %s sein" % (what, "positiv" if positive else "nicht negativ"))
+    return result
+
+
+def checked_prices(prices):
+    if not isinstance(prices, dict):
+        raise TaxError("Kurse müssen ein Objekt sein")
+    return {str(t).strip().upper(): number(p, "Kurs für %s" % t, positive=True) for t, p in prices.items()}
 
 
 def read_json(path, what, required=True):
@@ -76,7 +95,7 @@ def write_json(path, data):
 
 def day(s):
     try:
-        return datetime.date.fromisoformat(str(s)[:10])
+        return datetime.date.fromisoformat(str(s))
     except ValueError:
         raise TaxError("kein Datum (JJJJ-MM-TT): %r" % s)
 
@@ -88,7 +107,9 @@ def money(x):
 
 
 def fmt_qty(x):
-    s = ("%.6f" % float(x)).rstrip("0").rstrip(".")
+    # Orders nie über den tatsächlichen Bestand aufrunden. Rechenwerte bleiben präzise.
+    value = number(x, "Stückzahl")
+    s = ("%.6f" % (math.floor(value * 1000000 + EPS) / 1000000.0)).rstrip("0").rstrip(".")
     return s or "0"
 
 
@@ -105,20 +126,44 @@ def family(ticker):
 def lots_of(portfolio):
     """{ticker: [lot, ...]} mit id, date (date), shares, cost, per_share; ältestes zuerst."""
     out = {}
+    if not isinstance(portfolio, dict) or not isinstance(portfolio.get("positions", []), list):
+        raise TaxError("Depot muss ein Objekt mit einer Positionsliste sein")
+    if "cash" in portfolio:
+        number(portfolio["cash"], "Bargeld")
     for p in (portfolio or {}).get("positions", []):
-        t = str(p.get("ticker") or p.get("symbol") or "").upper()
+        if not isinstance(p, dict):
+            raise TaxError("jede Position muss ein Objekt sein")
+        t = str(p.get("ticker") or p.get("symbol") or "").strip().upper()
         if not t:
-            continue
+            raise TaxError("Position braucht einen Ticker")
+        if t in out:
+            raise TaxError("%s steht mehrfach im Depot; fasse seine Lots in einer Position zusammen" % t)
         lots = []
+        if not isinstance(p.get("lots", []), list):
+            raise TaxError("Lots müssen eine Liste sein")
+        ids = set()
         for i, l in enumerate(p.get("lots", []), 1):
-            sh, cost = float(l.get("shares", 0)), float(l.get("cost", 0))
+            if not isinstance(l, dict):
+                raise TaxError("jedes Lot muss ein Objekt sein")
+            sh = number(l.get("shares", 0), "Lot-Stückzahl für %s" % t)
+            cost = number(l.get("cost", 0), "Lot-Kosten für %s" % t)
             if sh <= EPS:
+                if cost:
+                    raise TaxError("Lot ohne Aktien darf keine Kosten enthalten")
                 continue
-            lots.append({"id": l.get("id") or "%s-%d" % (t, i), "date": day(l.get("date")),
+            lid = str(l.get("id") or "%s-%d" % (t, i))
+            if lid in ids:
+                raise TaxError("doppelte Lot-ID für %s: %s" % (t, lid))
+            ids.add(lid)
+            lots.append({"id": lid, "date": day(l.get("date")),
                          "shares": sh, "cost": cost, "per_share": cost / sh})
-        if not lots and float(p.get("shares", 0) or 0) > 0:
+        explicit = p.get("shares", p.get("qty"))
+        count = number(explicit, "Stückzahl für %s" % t) if explicit is not None else None
+        if not lots and count is not None and count > 0:
             raise TaxError("%s hat Aktien, aber keine Lots; trage seine Lots (Datum, Stück, Kosten) in "
                            "trader/portfolio.json ein" % t)
+        if lots and count is not None and abs(count - sum(l["shares"] for l in lots)) > 1e-6:
+            raise TaxError("%s: Stückzahl stimmt nicht mit der Summe der Lots überein" % t)
         lots.sort(key=lambda l: (l["date"], l["id"]))
         out[t] = lots
     return out
@@ -137,6 +182,7 @@ def term(acquired, sold):
 
 
 def unrealized(portfolio, prices, today):
+    prices = checked_prices(prices)
     rows, totals, missing = [], [], []
     for t, lots in sorted(lots_of(portfolio).items()):
         p = prices.get(t)
@@ -168,6 +214,7 @@ def unrealized(portfolio, prices, today):
 
 def pick_lots(lots, shares, method="fifo", ids=None):
     """[(lot, shares_taken)] für den Verkauf von `shares` nach der Lot-Methode."""
+    shares = number(shares, "Verkaufsstückzahl", positive=True)
     held = sum(l["shares"] for l in lots)
     if shares > held + EPS:
         raise TaxError("Verkauf von %s Aktien, aber nur %s sind im Bestand" % (fmt_qty(shares), fmt_qty(held)))
@@ -178,6 +225,8 @@ def pick_lots(lots, shares, method="fifo", ids=None):
     elif method == "specific":
         if not ids:
             raise TaxError("--method specific braucht --lots ID,ID")
+        if len(ids) != len(set(ids)):
+            raise TaxError("spezifische Lot-IDs dürfen nicht doppelt vorkommen")
         by_id = {l["id"]: l for l in lots}
         unknown = [i for i in ids if i not in by_id]
         if unknown:
@@ -198,12 +247,15 @@ def pick_lots(lots, shares, method="fifo", ids=None):
 
 
 def simulate_sale(lots, shares, price, sold, method="fifo", ids=None):
+    price = number(price, "Verkaufskurs", positive=True)
     used, res = [], {"proceeds": 0.0, "basis": 0.0, "short": 0.0, "long": 0.0}
     for l, take in pick_lots(lots, shares, method, ids):
+        if l["date"] > sold:
+            raise TaxError("Verkaufsdatum liegt vor dem Kaufdatum von Lot %s" % l["id"])
         basis = l["per_share"] * take
         proceeds = price * take
         tm = term(l["date"], sold)
-        used.append({"id": l["id"], "acquired": l["date"].isoformat(), "shares": round(take, 6),
+        used.append({"id": l["id"], "acquired": l["date"].isoformat(), "shares": take,
                      "basis": round(basis, 2), "proceeds": round(proceeds, 2),
                      "gain": round(proceeds - basis, 2), "term": tm})
         res["proceeds"] += proceeds
@@ -219,15 +271,25 @@ def simulate_sale(lots, shares, price, sold, method="fifo", ids=None):
 
 def planned_buys(orders, prices):
     out = []
+    if orders is None:
+        return out
+    if not isinstance(orders, list):
+        raise TaxError("geplante Aufträge müssen eine Liste sein")
     for o in orders or []:
+        if not isinstance(o, dict):
+            raise TaxError("jeder geplante Auftrag muss ein Objekt sein")
         if str(o.get("side", "")).lower() != "buy":
             continue
-        t = str(o.get("symbol", "")).upper()
+        t = str(o.get("symbol", "")).strip().upper()
+        if not t:
+            raise TaxError("geplanter Kauf braucht ein Symbol")
         sh = None
         if o.get("qty") is not None:
-            sh = float(o["qty"])
-        elif o.get("notional") is not None and prices.get(t):
-            sh = float(o["notional"]) / prices[t]
+            sh = number(o["qty"], "geplante Kaufstückzahl", positive=True)
+        elif o.get("notional") is not None:
+            amount = number(o["notional"], "geplanter Kaufbetrag", positive=True)
+            if prices.get(t):
+                sh = amount / number(prices[t], "Kaufkurs", positive=True)
         out.append({"ticker": t, "shares": sh})
     return out
 
@@ -246,9 +308,9 @@ def wash_check(ticker, sold, used, portfolio, orders, prices):
         if t not in fam:
             continue
         for l in lots:
-            keep = l["shares"] - sold_from.get(l["id"], 0.0)
+            keep = l["shares"] - (sold_from.get(l["id"], 0.0) if t == ticker.upper() else 0.0)
             if keep > EPS and lo <= l["date"] <= hi:
-                hits.append({"ticker": t, "date": l["date"].isoformat(), "shares": round(keep, 6),
+                hits.append({"ticker": t, "date": l["date"].isoformat(), "shares": keep,
                              "source": "Lot %s, das du noch hältst" % l["id"]})
     for b in planned_buys(orders, prices):
         if b["ticker"] in fam:
@@ -267,6 +329,26 @@ def disallowed(loss, shares_sold, hits):
             return round(-loss, 2)
         repl += h["shares"]
     return round(-loss * min(1.0, repl / shares_sold), 2) if shares_sold else 0.0
+
+
+def sale_disallowed(sale, hits):
+    """Schätzung je Verlust-Lot in Verkaufsreihenfolge; Gewinne heben Wash Sales nicht auf.
+
+    Kein vollständiges Steuerbuch: zukünftige Käufe und bereits anderweitig
+    zugeordnete Ersatzaktien erfordern einen separaten manuellen Abgleich.
+    """
+    losers = [u for u in sale["lots"] if u["gain"] < 0]
+    if not hits or not losers:
+        return 0.0
+    if any(h["shares"] is None for h in hits):
+        return round(sum(-u["gain"] for u in losers), 2)
+    remaining = sum(number(h["shares"], "Ersatzstückzahl") for h in hits)
+    result = 0.0
+    for u in losers:
+        matched = min(remaining, u["shares"])
+        result += -u["gain"] * matched / u["shares"]
+        remaining -= matched
+    return round(result, 2)
 
 
 def recent_loss_sales(ticker, when, realized):
@@ -288,6 +370,11 @@ def rebuy_date(sold):
 # ---------------------------------------------------------------- harvest
 
 def harvest(portfolio, prices, today, min_loss=100.0, min_pct=0.0, orders=None):
+    prices = checked_prices(prices)
+    min_loss = number(min_loss, "Mindestverlust")
+    min_pct = number(min_pct, "Mindestverlust in Prozent")
+    if min_pct > 100:
+        raise TaxError("Mindestverlust in Prozent darf höchstens 100 sein")
     cands = []
     for t, lots in sorted(lots_of(portfolio).items()):
         p = prices.get(t)
@@ -305,12 +392,12 @@ def harvest(portfolio, prices, today, min_loss=100.0, min_pct=0.0, orders=None):
         sale = simulate_sale(lots, shares, p, today, "specific", [l["id"] for l in losers])
         hits = wash_check(t, today, sale["lots"], portfolio, orders, prices)
         cands.append({
-            "ticker": t, "price": p, "shares": round(shares, 6), "lots": [l["id"] for l in losers],
+            "ticker": t, "price": p, "shares": shares, "lots": [l["id"] for l in losers],
             "all_lots": len(losers) == len(lots),
             "fifo_same": [l["id"] for l in lots[:len(losers)]] == [l["id"] for l in losers],
             "loss": round(loss, 2), "pct": round(pct, 2),
             "short": sale["short"], "long": sale["long"], "wash": hits,
-            "disallowed": disallowed(loss, shares, hits), "rebuy_on_or_after": rebuy_date(today),
+            "disallowed": sale_disallowed(sale, hits), "rebuy_on_or_after": rebuy_date(today),
         })
     cands.sort(key=lambda c: c["loss"])
     return cands
@@ -321,6 +408,9 @@ def harvest_orders(cands, include_wash=False):
     for c in cands:
         if c["wash"] and not include_wash:
             continue
+        qty = fmt_qty(c["shares"])
+        if float(qty) <= 0:
+            continue
         why = ("Vorschlag Tax-Loss-Harvesting: Lots %s verkaufen, geschätzter Verlust %s (%s kurzfristig, %s "
                "langfristig). %s nicht vor dem %s wieder kaufen (Wash Sale). Keine Steuerberatung."
                % (", ".join(c["lots"]), money(c["loss"]), money(c["short"]), money(c["long"]),
@@ -328,7 +418,7 @@ def harvest_orders(cands, include_wash=False):
         if not c["fifo_same"]:
             why += (" Das sind nicht deine ältesten Lots: Sag deinem Broker, dass er genau diese Lots verkaufen soll, "
                     "sonst verkauft er eventuell nach FIFO und realisiert ein anderes Ergebnis.")
-        out.append({"symbol": c["ticker"], "side": "sell", "qty": fmt_qty(c["shares"]),
+        out.append({"symbol": c["ticker"], "side": "sell", "qty": qty,
                     "type": "market", "time_in_force": "day", "why": why})
     return out
 
@@ -336,10 +426,21 @@ def harvest_orders(cands, include_wash=False):
 # ---------------------------------------------------------------- record a sale
 
 def record_sale(portfolio, ticker, sale, sold, price, state):
-    t = ticker.upper()
+    t = ticker.strip().upper()
+    known = lots_of(portfolio)
+    if t not in known or not sale.get("lots"):
+        raise TaxError("kein Bestand/Verkaufs-Lot für %s" % t)
+    by_id = {l["id"]: l for l in known[t]}
+    if len({u["id"] for u in sale["lots"]}) != len(sale["lots"]):
+        raise TaxError("Verkauf enthält doppelte Lot-IDs")
+    for u in sale["lots"]:
+        if u["id"] not in by_id or number(u["shares"], "Verkaufsstückzahl", True) > by_id[u["id"]]["shares"] + EPS:
+            raise TaxError("Verkaufs-Lot passt nicht zum Bestand")
+    if not isinstance(state, dict) or not isinstance(state.get("realized", []), list):
+        raise TaxError("Steuerprotokoll muss ein Objekt mit Verkaufsliste sein")
     taken = {u["id"]: u for u in sale["lots"]}
     for p in portfolio.get("positions", []):
-        if str(p.get("ticker", "")).upper() != t:
+        if str(p.get("ticker") or p.get("symbol") or "").strip().upper() != t:
             continue
         new = []
         for i, l in enumerate(p.get("lots", []), 1):
@@ -349,15 +450,16 @@ def record_sale(portfolio, ticker, sale, sold, price, state):
                 sh = float(l["shares"])
                 take = taken[lid]["shares"]
                 l["cost"] = round(float(l["cost"]) * (1 - take / sh), 2) if sh else 0.0
-                l["shares"] = round(sh - take, 6)
+                l["shares"] = max(0.0, sh - take)
             if float(l["shares"]) > EPS:
                 new.append(l)
         p["lots"] = new
-        p["shares"] = round(sum(float(l["shares"]) for l in new), 6)
-    portfolio["positions"] = [p for p in portfolio.get("positions", []) if float(p.get("shares", 0)) > EPS]
+        p["shares"] = sum(float(l["shares"]) for l in new)
+    portfolio["positions"] = [p for p in portfolio.get("positions", [])
+                              if float(p.get("shares", p.get("qty", sum(float(l["shares"]) for l in p.get("lots", []))))) > EPS]
     portfolio["cash"] = round(float(portfolio.get("cash", 0)) + sale["proceeds"], 2)
     state.setdefault("realized", []).append({
-        "date": sold.isoformat(), "symbol": t, "shares": round(sum(u["shares"] for u in sale["lots"]), 6),
+        "date": sold.isoformat(), "symbol": t, "shares": sum(u["shares"] for u in sale["lots"]),
         "price": price, "proceeds": sale["proceeds"], "basis": sale["basis"], "gain": sale["gain"],
         "short": sale["short"], "long": sale["long"], "wash_disallowed": sale.get("wash_disallowed", 0.0),
         "lots": sale["lots"]})
@@ -380,16 +482,20 @@ def realized_ytd(state, year):
 NOT_ADVICE = ("Keine Steuerberatung: nur Rechnung mit deinen Lots, nach US-Steuerrecht (in Deutschland gilt die "
               "Abgeltungsteuer). Die Wash-Sale-Regel zählt auch Käufe in deinem IRA, den Konten deines Partners "
               "und bei anderen Brokern, die dieses Tool nicht sehen kann. Sprich mit einer Steuerberatung, "
-              "bevor du handelst.")
+              "bevor du handelst. Wash-Sale-Zuordnungen über mehrere Verkäufe, nachträgliche Käufe und "
+              "Anpassungen von Ersatz-Lot-Einstandswert und Haltefrist werden nicht automatisch fortgeschrieben.")
 TERM_DE = {"short": "kurzfristig", "long": "langfristig"}
 
 
 def _inputs(a):
     portfolio = read_json(a.portfolio, "portfolio (lots)")
     pdoc = read_json(a.prices, "prices", required=False) or {}
-    prices = {str(k).upper(): float(v) for k, v in (pdoc.get("prices", pdoc) or {}).items()
-              if isinstance(v, (int, float))}
+    if not isinstance(pdoc, dict):
+        raise TaxError("Kursdatei muss ein Objekt sein")
+    prices = checked_prices(pdoc.get("prices", pdoc))
     state = read_json(a.state, "tax state", required=False) or {"realized": []}
+    if not isinstance(state, dict) or not isinstance(state.get("realized", []), list):
+        raise TaxError("Steuerprotokoll muss ein Objekt mit Verkaufsliste sein")
     odoc = read_json(a.orders, "orders", required=False) or {}
     orders = odoc.get("orders", []) if isinstance(odoc, dict) else odoc
     today = day(a.today) if a.today else datetime.date.today()
@@ -401,7 +507,7 @@ def cmd_report(a):
     rows, totals, missing = unrealized(portfolio, prices, today)
     if a.json:
         print(json.dumps({"lots": rows, "positions": totals, "missing_prices": missing,
-                          "realized_ytd": realized_ytd(state, today.year)}, indent=2))
+                          "realized_ytd": realized_ytd(state, today.year), "model_limits": NOT_ADVICE}, indent=2))
         return 0
     print("%-7s %10s %12s %12s %12s %8s" % ("Ticker", "Stück", "Kosten", "Wert", "Gewinn", "Gew. %"))
     for t in totals:
@@ -429,14 +535,15 @@ def cmd_sell(a):
     lots = lots_of(portfolio).get(t)
     if not lots:
         raise TaxError("keine Lots für %s in %s" % (t, a.portfolio))
-    price = a.price or prices.get(t)
+    price = a.price if a.price is not None else prices.get(t)
     if not price:
         raise TaxError("kein Kurs für %s: gib --price an" % t)
     ids = [i.strip() for i in (a.lots or "").split(",") if i.strip()]
     sale = simulate_sale(lots, float(a.shares), float(price), today, a.method, ids)
-    hits = wash_check(t, today, sale["lots"], portfolio, orders, prices) if sale["gain"] < 0 else []
+    hits = wash_check(t, today, sale["lots"], portfolio, orders, prices) if any(u["gain"] < 0 for u in sale["lots"]) else []
     sale["wash"] = hits
-    sale["wash_disallowed"] = disallowed(sale["gain"], float(a.shares), hits)
+    sale["wash_disallowed"] = sale_disallowed(sale, hits)
+    sale["model_limits"] = NOT_ADVICE
     if a.json:
         print(json.dumps(sale, indent=2))
     else:
@@ -452,7 +559,7 @@ def cmd_sell(a):
             print("WASH SALE: %s (%s Aktien, %s)." % (h["source"], fmt_qty(h["shares"]) if h["shares"] else "?",
                                                         h["date"]))
         if hits:
-            print("Bis zu %s dieses Verlusts würden nicht anerkannt und auf den Einstandswert der Ersatz-Aktien aufgeschlagen."
+            print("Geschätzt bis zu %s Verlust nicht anerkannt. Erforderliche Ersatz-Lot-Anpassungen werden nicht automatisch eingetragen."
                   % money(sale["wash_disallowed"]))
         elif sale["gain"] < 0:
             print("Kein Wash-Sale-Konflikt gefunden. %s nicht vor dem %s wieder kaufen."
@@ -480,7 +587,7 @@ def cmd_harvest(a):
                      "trader-risiko jeden Auftrag bestanden hat und du im Chat Ja dazu sagst."),
             "orders": props})
     if a.json:
-        print(json.dumps({"candidates": cands, "orders": props}, indent=2))
+        print(json.dumps({"candidates": cands, "orders": props, "model_limits": NOT_ADVICE}, indent=2))
         return 0 if cands else 1
     if not cands:
         print("Kein Lot hat einen Verlust von mindestens %s%s." % (money(a.min_loss),

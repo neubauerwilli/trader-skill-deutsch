@@ -8,15 +8,18 @@ description: >-
   wird, kann Bruchteile oder ganze Aktien, und schreibt die vorgeschlagenen
   Kaufaufträge nach trader/orders.json, genau in der Form von Alpacas
   place_stock_order (notional als String). Es wird nichts abgeschickt. Nutze ihn,
-  wenn der Nutzer sagt: "ich habe 5.000 Dollar", "I have $5,000", "berechne
+  wenn der Nutzer sagt: "ich habe 5.000 Dollar", "I have 5,000 USD", "berechne
   meine Käufe", "size my trades", "wie viel soll ich von jeder kaufen", "verwalte
   mein Budget", "teil mein Geld auf", "10 % Bargeld behalten", "keine Aktie über
-  25 %", "setze meine Regeln", oder nachdem /trader-kopie die Ziele geschrieben
+  25 %", "setze meine Regeln", oder nachdem /trader-skill-deutsch:trader-kopie die Ziele geschrieben
   hat.
 argument-hint: "[Budget in Dollar]"
 ---
 
 # trader-budget
+
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
 
 Der Budget-Verwalter macht aus "kopiere dieses Depot" ein "kaufe genau so viel
 von jeder Aktie", innerhalb von Regeln, die der Nutzer einmal festlegt. Er
@@ -76,25 +79,25 @@ Aktien, die nicht glatt aufgehen), wird als "ungenutzt" angezeigt.
 Zeig die Tabelle: Ticker, Gewicht, Dollar, welche Aktie an die Obergrenze
 gestoßen ist, den Bargeldpuffer und was ungenutzt bleibt. Sag, woher die
 Gewichte kommen und wie alt sie sind (eine 13F ist bei der Einreichung bis zu
-45 Tage alt). Übergib dann an `/trader-risiko`.
+45 Tage alt). Übergib dann an `/trader-skill-deutsch:trader-risiko`.
 
 ## Beispiel: das Reel
 
 Die 13F von Berkshire Hathaway für Q2 2026 (eingereicht 2026-08-14), Top 5:
 Apple 22.04 %, American Express 17.14 %, Alphabet 12.62 %, Coca-Cola 10.86 %,
 Bank of America 9.20 %. Neu auf 100 verteilt über diese fünf: 30.67 / 23.85 /
-17.56 / 15.11 / 12.80. Bei einem Budget von $5,000, 10 % Bargeldpuffer und 25 %
+17.56 / 15.11 / 12.80. Bei einem Budget von 5,000 USD, 10 % Bargeldpuffer und 25 %
 Obergrenze:
 
 | Aktie | Dollar | |
 | --- | --- | --- |
-| AAPL | $1,250 | bei 25 % gedeckelt |
-| AXP | $1,119 | |
-| GOOGL | $823 | |
-| KO | $708 | |
-| BAC | $600 | |
-| Bargeldpuffer | $500 | |
-| ungenutzt | $0 | |
+| AAPL | 1,250 USD | bei 25 % gedeckelt |
+| AXP | 1,119 USD | |
+| GOOGL | 823 USD | |
+| KO | 708 USD | |
+| BAC | 600 USD | |
+| Bargeldpuffer | 500 USD | |
+| ungenutzt | 0 USD | |
 
 Der erste Auftrag, den er schreibt, ist
 `{"symbol": "AAPL", "side": "buy", "notional": "1250", "type": "market", "time_in_force": "day"}`.
@@ -109,6 +112,8 @@ Dollar verschieben.
 - Jede Zahl kommt aus der Konfiguration, den Zielen oder den Kursen. Nichts wird geraten.
 - Keine Prognosen: Sag nie, was die Positionen wert sein oder einbringen werden.
 - Ganze Aktien brauchen echte Kurse aus `trader/prices.json`; erfinde nie einen Kurs.
+- Budget und Preise müssen endlich und positiv sein; Mindestaufträge dürfen nicht negativ sein. NaN, Infinity und Wahrheitswerte sind keine Geldbeträge. Nicht positive Zielgewichte werden als gestrichen ausgewiesen. Cent-Bruchteile der Pflichtreserve werden auf-, Positionsobergrenzen abgerundet; bei Dollar-Rundung kann deshalb zusätzlich Geld frei bleiben.
+- `max_order_usd` wird anschließend von trader-risiko geprüft. Dieser Budgetrechner teilt einen größeren Positionsvorschlag nicht automatisch in mehrere Aufträge auf und garantiert dessen Freigabe nicht.
 
 ## Was er nie tut
 
@@ -122,13 +127,7 @@ Geld) oder Leerverkäufe.
   keine Rendite versprochen.
 - Standardmäßig Paper Trading, also Spielgeld (`"paper": true`). Live zu gehen
   ist die eigene Entscheidung des Nutzers, in seiner eigenen Konfiguration.
-- Nichts in diesem Paket schickt einen Auftrag ab außer trader-broker, und das
-  nur, wenn alle drei Dinge stimmen: trader-risiko hat genau diesen Auftrag
-  heute bestanden, der Nutzer hat im Chat für genau diesen einen Auftrag
-  ausdrücklich "Ja" geschrieben (nichts ohne dein "Ja"), und der Nutzer hat auf
-  Claudes eigener Karte "Allow once" geklickt, weil das Auftragswerkzeug auf
-  "Needs approval" steht (Customize > Connectors > tool permissions). Setze ein
-  Auftragswerkzeug nie auf "Always allow".
+- Das Skript schreibt nur Vorschläge. trader-broker bereitet ein Ticket vor und platziert selbst keinen Auftrag. Ein separat verbundener Broker wäre ein eigener Ausführungsweg. Vorgesehen sind trader-risiko, dein ausdrückliches Ja je Auftrag und eine zusätzlich konfigurierte Tool-Genehmigung. Das sind Projektregeln und Berechtigungen, keine technisch unfehlbare Sperre für jeden möglichen Ausführungsweg. Kein Broker-Tool auf "Always allow" setzen.
 - Keine Optionen, kein Margin (geliehenes Geld), keine Leerverkäufe, kein
   Hebel, außer die Konfiguration erlaubt es und der Nutzer bestätigt es.
 - Broker-Schlüssel liegen in Umgebungsvariablen oder in der Claude-Desktop-

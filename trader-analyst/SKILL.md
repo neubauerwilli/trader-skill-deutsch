@@ -19,6 +19,9 @@ argument-hint: "[Ticker]"
 
 # trader-analyst
 
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
+
 Die Berichtssaison bewegt Aktien, und die Pressemitteilung ist so
 geschrieben, dass die beste Zahl zuerst steht. Dieser Skill liest die Zahlen,
 die das Unternehmen tatsächlich bei der SEC eingereicht hat, stellt sie
@@ -43,7 +46,7 @@ echten E-Mail des Nutzers. Ohne ihn weigert es sich, die SEC aufzurufen.
   8-K, um die Pressemitteilung zu finden (die Anlage EX-99.1).
 - Schreibt mit `--metrics` die Datei `trader/metrics.json`: eine Zeile pro
   Unternehmen (TTM-Umsatz, -Nettogewinn und verwässertes EPS, die neuesten
-  Margen und das Wachstum) für `/trader-filter`. `metrics.example.json` in
+  Margen und das Wachstum) für `/trader-skill-deutsch:trader-filter`. `metrics.example.json` in
   diesem Ordner ist ein echter Lauf für AAPL, AXP, GOOGL, KO und BAC am
   13.10.2026.
 
@@ -52,6 +55,7 @@ echten E-Mail des Nutzers. Ohne ihn weigert es sich, die SEC aufzurufen.
 - **Zuerst die eingereichten Zahlen.** Die Tabelle kommt aus XBRL-Fakten, die
   das Unternehmen eingereicht hat. Nutze die Pressemitteilung für den
   Zusammenhang (Ausblick, Segmentfarbe) und sag, welche Zahlen woher kamen.
+- **Währung und Lücken erhalten.** USD-Zahlen werden nur aus der Einheit USD gelesen, EPS aus USD/shares. Eine andere Währung ist kein Ersatz; fehlende, NaN- oder unendliche Werte bleiben fehlend.
 - **Vergleiche Gleiches mit Gleichem.** Wachstum gilt gegenüber demselben
   Quartal des Vorjahres. Veränderungen zum Vorquartal werden gezeigt, aber
   viele Geschäfte sind saisonal (Apples Dezemberquartal ist immer sein
@@ -59,7 +63,7 @@ echten E-Mail des Nutzers. Ohne ihn weigert es sich, die SEC aufzurufen.
 - **Sag, was abgeleitet ist.** Unternehmen reichen kein 10-Q für das vierte
   Quartal ein. Das vierte Quartal ist das 10-K-Jahr minus die drei Quartale
   darin und wird als "abgeleitet" (derived) markiert; abgeleitetes EPS ist
-  ungefähr.
+  ungefähr. Die drei abgezogenen Quartale müssen lückenlos anschließen; fehlt ein passender Zeitraum, bleibt Q4 leer. TTM wird nur aus vier zusammenhängenden Quartalen bis zum neuesten Berichtsende gebildet. Alte EPS-Jahre werden nicht mit einem aktuellen Kurs als aktuelles TTM vermischt.
 - **Sag, wenn die Daten hinterherhinken.** Die Fakten-Schnittstelle der SEC
   kann einer Meldung hinterherhinken. Ist das neueste 10-Q später als das
   neueste Quartal in den Fakten, druckt das Werkzeug einen HINWEIS mit dem
@@ -92,10 +96,10 @@ echten E-Mail des Nutzers. Ohne ihn weigert es sich, die SEC aufzurufen.
 ## Beispiel: die größte Position aus dem Reel
 
 `facts.py AAPL` (13.10.2026): Quartal bis 27.06.2026 (Geschäftsjahr Q3 2026),
-Umsatz $109,42 Mrd., +16,4 % gegenüber dem Vorjahr, Nettogewinn $29,79 Mrd.
-(+27,1 %), verwässertes EPS $2,02 (+28,7 %); Bruttomarge 50,1 % (+0,8 Punkte
-gegenüber dem Quartal davor); die letzten vier Quartale $466,8 Mrd. Umsatz und
-$8,71 EPS. Pressemitteilung: die Anlage EX-99.1 des 8-K, eingereicht am
+Umsatz 109,42 Mrd. USD, +16,4 % gegenüber dem Vorjahr, Nettogewinn 29,79 Mrd. USD
+(+27,1 %), verwässertes EPS 2,02 USD (+28,7 %); Bruttomarge 50,1 % (+0,8 Punkte
+gegenüber dem Quartal davor); die letzten vier Quartale 466,8 Mrd. USD Umsatz und
+8,71 USD EPS. Pressemitteilung: die Anlage EX-99.1 des 8-K, eingereicht am
 30.07.2026. Bei Coca-Cola vermerkt das Werkzeug, dass die Fakten der SEC am
 03.04.2026 enden, während das 10-Q für den 03.07.2026 schon eingereicht ist,
 also liest die Zusammenfassung dieses 10-Q direkt.
@@ -112,6 +116,6 @@ also liest die Zusammenfassung dieses 10-Q direkt.
 ## Sicherheit
 
 Bildung und Werkzeug, **Keine Anlageberatung**. Dieser Skill liest nur
-Meldungen. Nichts gibt einen Auftrag auf außer `/trader-broker`, nachdem
-`/trader-risiko` besteht und du für genau diesen Auftrag ausdrücklich "Ja"
+Meldungen. Nichts gibt einen Auftrag auf außer `/trader-skill-deutsch:trader-broker`, nachdem
+`/trader-skill-deutsch:trader-risiko` besteht und du für genau diesen Auftrag ausdrücklich "Ja"
 schreibst. Ohne dein "Ja" passiert nichts.

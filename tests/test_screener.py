@@ -129,5 +129,51 @@ class Cli(unittest.TestCase):
         self.assertEqual([p["ticker"] for p in json.loads(text)["passed"]], ["GOOGL"])
 
 
+
+class DataValidityRegression(unittest.TestCase):
+    def test_nonfinite_metrics_are_missing_even_for_not_equal(self):
+        for value in (float("nan"), float("inf"), -float("inf")):
+            with self.subTest(value=value):
+                rule = {"metric": "pe", "op": "!=", "value": 0}
+                self.assertIsNone(scr.check({"pe": value}, rule)[0])
+                self.assertIsNone(scr.to_number(str(value)))
+                res = scr.screen([{"ticker": "BAD", "pe": value}], {"rules": [rule]})
+                self.assertFalse(res[0]["passed"])
+
+    def test_nonfinite_rank_values_are_gaps(self):
+        res = scr.screen([{"ticker": "BAD", "pe": float("nan")}, {"ticker": "OK", "pe": 10}],
+                         {"rank": [{"metric": "pe"}]})
+        bad = next(x for x in res if x["ticker"] == "BAD")
+        self.assertIsNone(bad["score"])
+        self.assertEqual(bad["rank_gaps"], ["pe"])
+
+    def test_invalid_numeric_rules_raise_domain_error(self):
+        for want in ("cheap", float("nan"), float("inf"), True):
+            with self.subTest(want=want), self.assertRaises(scr.ScreenError):
+                scr.check_rules({"rules": [{"metric": "pe", "op": "<", "value": want}]})
+        with self.assertRaises(scr.ScreenError):
+            scr.check_rules({"rank": [{"metric": "pe", "weight": -1}]})
+
+    def test_numeric_equality_does_not_evaluate_unrelated_order_comparisons(self):
+        self.assertFalse(scr.check({"pe": 10}, {"metric": "pe", "op": "==", "value": "ten"})[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            p = os.path.join(tmp, "metrics.json")
+            with open(p, "w") as fh:
+                fh.write('[{"ticker":"BAD","pe":NaN}]')
+            rows = scr.load_metrics(p)
+            self.assertIsNone(rows[0]["pe"])
+            json.dumps(rows, allow_nan=False)
+
+    def test_nonfinite_prices_never_create_valuation_ratios(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = os.path.join(tmp, "prices.json")
+            with open(p, "w") as fh:
+                json.dump({"prices": {"BAD": float("nan")}}, fh)
+            rows = [{"ticker": "BAD", "eps_ttm": 2}]
+            scr.add_prices(rows, p)
+            self.assertNotIn("price", rows[0])
+            self.assertNotIn("earnings_yield", rows[0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,9 @@ argument-hint: "[Name des Mitglieds] [--read]"
 
 # trader-pelosi
 
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
+
 Mitglieder des Kongresses müssen ihre Geschäfte melden, ebenso die ihres
 Ehepartners und ihrer abhängigen Kinder. Der House Clerk veröffentlicht jede
 Meldung als PDF und listet alle in einer Indexdatei pro Jahr. Dieser Skill
@@ -57,12 +60,11 @@ python3 "${CLAUDE_SKILL_DIR}/ptr.py" --help
   PTR-PDF auf der Seite des Clerk, mit DocID und Link. Fremde Tracker sind
   zum Stöbern in Ordnung, können aber danebenliegen (Capitol Trades zeigte
   Pelosis Handelsdaten einen Tag früher als ihre PTRs). Die PTR gewinnt.
-- **Beträge sind Spannen.** "$1,000,001 - $5,000,000", nie "$3 Millionen".
+- **Beträge sind Spannen.** "1,000,001 USD - 5,000,000 USD", nie "3 Millionen USD".
 - **Der Eigentümer zählt.** SP ist der Ehepartner, JT gemeinsam, DC ein
-  abhängiges Kind, leer das Mitglied selbst. Pelosis Geschäfte 2026 sind
-  alle SP: Paul Pelosi.
+  abhängiges Kind, leer das Mitglied selbst. Lies die Angabe je Zeile; ordne sie nicht pauschal Nancy oder Paul Pelosi zu.
 - **Nenne die Verzögerung.** Jede Zeile zeigt, wie viele Tage zwischen
-  Geschäft und Meldung vergingen; über 45 wird als zu spät markiert.
+  Geschäft und Meldung vergingen. Das frühere Datum aus 30 Tagen nach der gemeldeten Kenntnisnahme und 45 Tagen nach dem Handel ist die Frist; eine spätere Meldung wird markiert.
 - **Optionen sind Optionen.** Ein gekaufter Call mit Strike und Verfall ist
   kein Aktienkauf. Das Werkzeug liest Kontrakte, Strike und Verfall aus der
   Beschreibung und markiert Ausübungen.
@@ -111,12 +113,12 @@ eine Meldung über mehrere Seiten geht.
 ```
 NEU Periodic Transaction Report: Hon. Nancy Pelosi (CA11) eingereicht am 2026-08-21, doc 20035143
   - Ehepartner Kauf, Bloom Energy Corporation Class A Common Stock (BE): 100 call-Optionen,
-    $100 Strike, Verfall 2027-06-17, $1,000,001 - $5,000,000, gehandelt am
+    100 USD Strike, Verfall 2027-06-17, 1,000,001 USD - 5,000,000 USD, gehandelt am
     2026-07-24, 28 Tage später gemeldet
 ```
 
 Dieselbe PTR zeigt außerdem 10.000 und 5.000 BE-Aktien, einen zweiten Block
-mit 100 BE-Calls am 28.07., Intel-Aktien und 50 Intel-Calls ($50 Strike,
+mit 100 BE-Calls am 28.07., Intel-Aktien und 50 Intel-Calls (50 USD Strike,
 17.06.2027) und eine private Immobilien-LLC ohne Ticker. Ihre anderen PTRs
 2026: 20033725 (23.01.), 20034836 (23.06., Intel- und Uber-Calls) und
 20035553 (02.10., eine Immobilien-LLC). Dann sagst du: "Das ist eine
@@ -124,8 +126,8 @@ mit 100 BE-Calls am 28.07., Intel-Aktien und 50 Intel-Calls ($50 Strike,
 Paul Pelosi im Juli gekauft hat, nicht, was jemand als Nächstes kaufen wird."
 
 Wenn der Nutzer danach handeln will, geht es den langen Weg: nur Aktien (die
-Konfiguration hat `allow_options: false`), Größe durch `/trader-budget`,
-Prüfung durch `/trader-risiko`, Auftrag durch `/trader-broker` erst nach
+Konfiguration hat `allow_options: false`), Größe durch `/trader-skill-deutsch:trader-budget`,
+Prüfung durch `/trader-skill-deutsch:trader-risiko`, Auftrag durch `/trader-skill-deutsch:trader-broker` erst nach
 seinem "Ja".
 
 ## Der Senat: der manuelle Weg
@@ -161,8 +163,8 @@ Der Weg:
   eine Empfehlung, etwas zu kaufen oder zu verkaufen.
 - Standardmäßig Paper Trading, also Spielgeld (`"paper": true` in
   `trader/config.json`).
-- Nichts gibt einen Auftrag auf außer `/trader-broker`, und das erst, wenn
-  `/trader-risiko` besteht UND du im Chat für genau diesen Auftrag
+- Nichts gibt einen Auftrag auf außer `/trader-skill-deutsch:trader-broker`, und das erst, wenn
+  `/trader-skill-deutsch:trader-risiko` besteht UND du im Chat für genau diesen Auftrag
   ausdrücklich "Ja" schreibst, UND das Broker-Werkzeug in Claude auf "Needs
   approval" steht (Customize > Connectors > tool permissions), sodass auch
   Claudes eigene Karte "Allow once / Deny" erscheint. Nie "Always allow" für

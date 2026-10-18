@@ -5,7 +5,7 @@ description: >-
   (Umsatzwachstum, Margen, Gewinn je Aktie, KGV, Gewinnrendite, Branche, alles
   aus der Kennzahlen-Datei), sagt genau, welche Regel jede Firma besteht oder
   verfehlt und um wie viel, und sortiert die Firmen, die bestehen, in eine
-  Shortlist. Liest die Kennzahlen, die /trader-analyst aus SEC-Berichten
+  Shortlist. Liest die Kennzahlen, die /trader-skill-deutsch:trader-analyst aus SEC-Berichten
   schreibt, oder jede beliebige CSV. Nutze ihn, wenn der Nutzer sagt: "filtere
   Aktien", "finde mir Firmen, die", "filter meine Watchlist", "welche davon
   erfüllen meine Regeln", "Shortlist", "rank diese Aktien", "wachsende Firmen
@@ -15,6 +15,9 @@ argument-hint: "[Kennzahlen-Datei] [--rules rules.json]"
 ---
 
 # trader-filter
+
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
 
 Ein Filter macht aus "Ich will profitable Firmen, die noch wachsen und nicht
 zu teuer sind" Regeln, die ein Computer prüfen kann. Und er zeigt seine Arbeit:
@@ -28,11 +31,11 @@ python3 "${CLAUDE_SKILL_DIR}/screen.py" --help
 
 ## Was er liest und schreibt
 
-- Kennzahlen: `trader/metrics.json` von `/trader-analyst` (`facts.py --metrics`)
+- Kennzahlen: `trader/metrics.json` von `/trader-skill-deutsch:trader-analyst` (`facts.py --metrics`)
   oder jede JSON-Liste oder CSV mit einer Spalte `ticker`. Zahlen in der CSV
   dürfen `$`, `%` und Kommas enthalten.
 - Kurse (optional): `trader/prices.json` (`{"prices": {"AAPL": 341.27}}`,
-  aus beliebiger Quelle; `/trader-alarm` schreibt sie). Mit Kursen ergänzt er
+  aus beliebiger Quelle; `/trader-skill-deutsch:trader-alarm` schreibt sie). Mit Kursen ergänzt er
   `price`, `pe` (Kurs / Gewinn je Aktie der letzten zwölf Monate, nur wenn der
   Gewinn positiv ist) und `earnings_yield` (Gewinnrendite).
 - Regeln: eine JSON-Datei. Als Startpunkt gibt es `rules.example.json` in
@@ -58,14 +61,14 @@ ausschließen willst). `"missing": "fail"` lässt eine Firma durchfallen, der
 eine Kennzahl fehlt, die eine Regel braucht (Banken haben in den SEC-Daten
 keine operative Marge). `"skip"` überspringt diese Regel für die Firma und
 sagt das dazu. Die Rangliste gibt jeder Firma, die besteht, pro Rang-Kennzahl
-eine Note von 0 bis 1 und nimmt den gewichteten Durchschnitt.
+eine Note von 0 bis 1 und nimmt den gewichteten Durchschnitt. NaN und unendliche Kennzahlen gelten als fehlend und erhalten keinen Rangbeitrag. Grenzwerte müssen endliche Zahlen sein; Ranggewichte müssen positiv und endlich sein.
 
 ## Schritte
 
 1. Übersetze die Worte des Nutzers in Regeln. Frag nach, wenn eine Schwelle
    unklar ist ("billig" heißt welches KGV?). Schreib die Regeln nach
    `trader/rules.json`.
-2. Hol die Kennzahlen für die Kandidaten: Starte `/trader-analyst` dafür mit
+2. Hol die Kennzahlen für die Kandidaten: Starte `/trader-skill-deutsch:trader-analyst` dafür mit
    `--metrics trader/metrics.json` (also `facts.py AAPL AXP GOOGL KO BAC
    --metrics trader/metrics.json`) oder nimm die CSV des Nutzers. Kurse aus
    `trader/prices.json`, wenn das KGV eine Rolle spielt.
@@ -80,7 +83,7 @@ eine Note von 0 bis 1 und nimmt den gewichteten Durchschnitt.
    Fehlschläge.
 4. Berichte die Shortlist mit den Gründen, die Durchgefallenen mit den Zahlen,
    an denen sie gescheitert sind, und dem Datum der Zahlen (das letzte
-   Quartalsende je Firma, das Kursdatum). Empfiehl `/trader-analyst` für die
+   Quartalsende je Firma, das Kursdatum). Empfiehl `/trader-skill-deutsch:trader-analyst` für die
    Spitzenreiter, bevor irgendetwas anderes passiert.
 
 ## Beispiel: die fünf aus dem Reel
@@ -108,12 +111,12 @@ des Kerngeschäfts), und Coca-Colas Zahlen enden mit dem Quartal zum
   Zahlen, er ist keine Empfehlung.
 - Füllt nie eine fehlende Zahl auf und rät nie eine Kennzahl: Fehlt sie, fehlt
   sie.
-- Schickt nie von sich aus etwas an `/trader-budget` oder an einen Weg zum
+- Schickt nie von sich aus etwas an `/trader-skill-deutsch:trader-budget` oder an einen Weg zum
   Auftrag.
 
 ## Sicherheit
 
 Bildung und Werkzeug, keine Anlageberatung. Dieser Skill filtert nur Zahlen.
-Nichts löst einen Auftrag aus außer `/trader-broker`, und das erst, nachdem
-`/trader-risiko` bestanden ist und der Nutzer für genau diesen Auftrag ein
+Nichts löst einen Auftrag aus außer `/trader-skill-deutsch:trader-broker`, und das erst, nachdem
+`/trader-skill-deutsch:trader-risiko` bestanden ist und der Nutzer für genau diesen Auftrag ein
 ausdrückliches Ja gegeben hat. Ohne dein Ja passiert nichts.

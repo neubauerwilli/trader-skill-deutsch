@@ -39,9 +39,11 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import sys
+import uuid
 
 DEFAULTS = {
     "budget": None, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_usd": 2000,
@@ -71,7 +73,7 @@ def read_json(path, what, required=True):
     try:
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
-    except json.JSONDecodeError as e:
+    except (ValueError, OSError) as e:
         raise RiskError("%s ist kein gültiges JSON: %s" % (path, e))
 
 
@@ -83,10 +85,48 @@ def fingerprint(order):
 
 
 def _f(x):
-    try:
-        return float(x)
-    except (TypeError, ValueError):
+    if isinstance(x, bool):
         return None
+    try:
+        value = float(x)
+        return value if math.isfinite(value) else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def config_checked(cfg):
+    if not isinstance(cfg, dict):
+        raise RiskError("Konfiguration muss ein JSON-Objekt sein")
+    c = dict(DEFAULTS)
+    c.update(cfg)
+    for key in ("paper", "allow_options", "allow_margin", "allow_short"):
+        if not isinstance(c[key], bool):
+            raise RiskError("%s muss true oder false sein" % key)
+    for key in ("cash_buffer_pct", "max_position_pct", "min_order_usd", "max_order_usd", "max_orders_per_day"):
+        value = _f(c[key])
+        if value is None or value < 0:
+            raise RiskError("%s braucht eine endliche, nicht negative Zahl" % key)
+        if key.endswith("_pct") and value > 100:
+            raise RiskError("%s muss zwischen 0 und 100 liegen" % key)
+        if key == "max_orders_per_day" and not value.is_integer():
+            raise RiskError("max_orders_per_day muss eine ganze Zahl sein")
+        c[key] = value
+    if c["max_order_usd"] and c["min_order_usd"] > c["max_order_usd"]:
+        raise RiskError("Mindestauftrag ist größer als Höchstauftrag")
+    if c.get("budget") is not None and (_f(c["budget"]) is None or _f(c["budget"]) <= 0):
+        raise RiskError("budget braucht eine positive, endliche Zahl")
+    if not isinstance(c["blocked"], list) or any(not isinstance(t, str) or not t.strip() for t in c["blocked"]):
+        raise RiskError("blocked muss eine Liste nicht leerer Ticker sein")
+    return c
+
+
+def document_fingerprint(doc):
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def input_snapshot(path):
+    doc = read_json(path, "Prüfeingabe", required=False)
+    return {"path": os.path.abspath(path), "fingerprint": document_fingerprint(doc)}
 
 
 def money(x):
@@ -99,35 +139,57 @@ def account(cfg, portfolio, prices):
     warnings = []
     if portfolio is None:
         budget = _f(cfg.get("budget"))
-        if not budget:
+        if budget is None or budget <= 0:
             raise RiskError("keine trader/portfolio.json und kein Budget in der Konfiguration: "
                             "es gibt nichts, wogegen die Aufträge geprüft werden könnten")
         return {"cash": budget, "shares": {}, "values": {}}, warnings
+    if not isinstance(portfolio, dict) or not isinstance(portfolio.get("positions", []), list):
+        raise RiskError("Depot muss ein Objekt mit einer Positionsliste sein")
     cash = _f(portfolio.get("cash"))
-    if cash is None:
+    if cash is None or cash < 0:
         raise RiskError("portfolio.json braucht eine Zahl bei \"cash\"")
     shares, values = {}, {}
     for p in portfolio.get("positions", []):
+        if not isinstance(p, dict) or not isinstance(p.get("lots", []), list):
+            raise RiskError("jede Depotposition braucht ein Objekt und eine gültige Lot-Liste")
         t = str(p.get("ticker") or p.get("symbol") or "").upper()
         if not t:
-            continue
+            raise RiskError("Depotposition ohne Ticker")
+        lots = p.get("lots", [])
+        for lot in lots:
+            if not isinstance(lot, dict) or any(_f(lot.get(k)) is None or _f(lot.get(k)) < 0 for k in ("shares", "cost")):
+                raise RiskError("Lot von %s braucht endliche, nicht negative shares und cost" % t)
         n = _f(p.get("shares", p.get("qty")))
         if n is None:
-            n = sum(_f(l.get("shares")) or 0 for l in p.get("lots", []))
+            if p.get("shares", p.get("qty")) is not None:
+                raise RiskError("ungültige Aktienzahl im Depot für %s" % t)
+            n = sum(_f(l["shares"]) for l in lots)
+        if n < 0 or not math.isfinite(n):
+            raise RiskError("ungültige Aktienzahl im Depot für %s" % t)
         shares[t] = shares.get(t, 0) + n
         if prices.get(t):
-            values[t] = shares[t] * prices[t]
+            values[t] = shares[t] * prices[t] * (100 if OCC.match(t.replace(" ", "")) else 1)
         else:
-            basis = sum(_f(l.get("cost")) or 0 for l in p.get("lots", []))
-            values[t] = basis
+            if n > 0 and not lots:
+                raise RiskError("kein Kurs und keine Einstandswerte für Depotposition %s" % t)
+            basis = sum(_f(l["cost"]) for l in lots)
+            values[t] = values.get(t, 0) + basis
             warnings.append("kein Kurs für %s: bewertet zum Einstandswert %s" % (t, money(basis)))
+        if not math.isfinite(values[t]) or not math.isfinite(shares[t]):
+            raise RiskError("Depotwert läuft für %s über" % t)
+    if not math.isfinite(cash + sum(values.values())):
+        raise RiskError("Gesamtwert des Depots läuft über")
     return {"cash": cash, "shares": shares, "values": values}, warnings
 
 
 def placed_today(state, today):
     """Aufträge, die trader-broker heute als abgeschickt verzeichnet hat."""
     out = []
+    if state is not None and (not isinstance(state, dict) or not isinstance(state.get("orders", []), list)):
+        raise RiskError("Broker-Stand braucht eine Auftragsliste")
     for rec in (state or {}).get("orders", []):
+        if not isinstance(rec, dict):
+            raise RiskError("ungültiger Eintrag im Broker-Stand")
         if rec.get("status") == "placed" and str(rec.get("date") or str(rec.get("at", ""))[:10]) == today:
             out.append(rec)
     return out
@@ -135,9 +197,14 @@ def placed_today(state, today):
 
 def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
     """Reine Funktion. Gibt {"results": [...], "pass": n, "block": n, "warnings": [...]} zurück."""
-    c = dict(DEFAULTS)
-    c.update(cfg or {})
-    prices = {str(k).upper(): float(v) for k, v in (prices or {}).items() if _f(v)}
+    if not isinstance(orders, list) or not orders or any(not isinstance(o, dict) for o in orders):
+        raise RiskError("Aufträge müssen eine nicht leere Liste von Objekten sein")
+    c = config_checked({} if cfg is None else cfg)
+    if prices is not None and not isinstance(prices, dict):
+        raise RiskError("Kurse müssen ein JSON-Objekt sein")
+    if any(_f(v) is None or _f(v) <= 0 for v in (prices or {}).values()):
+        raise RiskError("Kurse müssen endliche, positive Zahlen sein")
+    prices = {str(k).upper(): _f(v) for k, v in (prices or {}).items()}
     today = today or datetime.date.today().isoformat()
     acct, top_warn = account(c, portfolio, prices)
     blocked = {str(b).upper() for b in c.get("blocked") or []}
@@ -165,7 +232,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
             reasons.append("Format: side muss buy oder sell sein, bekommen: %r" % o.get("side"))
         if (qty is None) == (notional is None):
             reasons.append("Format: gib genau eins von qty oder notional an")
-        for k in ("qty", "notional", "limit_price", "stop_price"):
+        for k in ("qty", "notional", "limit_price", "stop_price", "trail_price", "trail_percent",
+                  "take_profit_limit_price", "stop_loss_stop_price", "stop_loss_limit_price"):
             if o.get(k) is not None:
                 v = _f(o.get(k))
                 if v is None or v <= 0:
@@ -185,12 +253,19 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
             reasons.append("Format: ein %s-Auftrag braucht einen stop_price" % typ)
         if o.get("extended_hours") and not (typ == "limit" and tif == "day"):
             reasons.append("Format: extended hours braucht einen Limit-Auftrag mit time_in_force day")
+        if "extended_hours" in o and not isinstance(o["extended_hours"], bool):
+            reasons.append("Format: extended_hours muss true oder false sein")
+        if typ == "trailing_stop":
+            if (o.get("trail_price") is None) == (o.get("trail_percent") is None):
+                reasons.append("Format: trailing_stop braucht genau eins von trail_price und trail_percent")
+            if _f(o.get("trail_percent")) is not None and _f(o["trail_percent"]) > 100:
+                reasons.append("Format: trail_percent darf 100 nicht überschreiten")
         if o.get("order_class") or o.get("advanced_instructions"):
-            warns.append("erweiterter Auftrag (%s): prüfe jeden Teil, bevor du Ja sagst"
-                         % (o.get("order_class") or "advanced_instructions"))
+            reasons.append("Format: erweiterte Aufträge sind ohne Prüfung aller Teilaufträge nicht unterstützt")
 
         # asset
-        if sym and OCC.match(sym.replace(" ", "")):
+        is_option = bool(sym and OCC.match(sym.replace(" ", "")))
+        if is_option:
             if not c.get("allow_options"):
                 reasons.append("Wertpapier: %s ist ein Optionskontrakt; Optionen sind aus "
                                "(\"allow_options\": false)" % sym)
@@ -216,12 +291,15 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
             value = _f(notional)
         elif qty is not None and _f(qty):
             if ref:
-                value = _f(qty) * ref
+                value = _f(qty) * ref * (100 if is_option else 1)
             else:
                 reasons.append("Preis: kein Kurs für %s, um einen Auftrag über %s Aktien zu bewerten; trage ihn in "
                                "trader/prices.json ein (trader-alarm: alerts.py quote %s --write)"
                                % (sym, qty, sym))
 
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            reasons.append("Größe: der Auftragswert ist nicht endlich und positiv")
+            value = None
         if value is not None:
             if value < float(c.get("min_order_usd") or 0) - CENT:
                 reasons.append("Größe: %s liegt unter deinem Mindestauftrag von %s"
@@ -235,9 +313,11 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
         held = acct["shares"].get(sym, 0.0)
         held_value = acct["values"].get(sym, 0.0)
         total = cash + sum(acct["values"].values())
-        buffer_usd = total * float(c.get("cash_buffer_pct") or 0) / 100.0
+        buffer_usd = total * (c["cash_buffer_pct"] / 100.0)
         if value is not None and side == "buy":
             after_cash = cash - value
+            if not math.isfinite(after_cash):
+                reasons.append("Bargeld: Kontowert läuft über")
             if after_cash < -CENT and not c.get("allow_margin"):
                 reasons.append("Bargeld: braucht %s, aber nur %s Bargeld da; das wäre Margin (geliehenes Geld)"
                                % (money(value), money(cash)))
@@ -245,12 +325,14 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
                 reasons.append("Bargeld: lässt %s Bargeld übrig, unter deinem Puffer von %s%% = %s"
                                % (money(max(after_cash, 0)), _pct(c["cash_buffer_pct"]), money(buffer_usd)))
             pos_after = held_value + value
-            limit = total * float(c.get("max_position_pct") or 100) / 100.0
+            limit = total * (c["max_position_pct"] / 100.0)
             if total > 0 and pos_after > limit + CENT:
                 reasons.append("Position: %s wäre %s, %.1f%% des Kontos von %s, über deiner Obergrenze von %s%%"
                                % (sym, money(pos_after), 100.0 * pos_after / total, money(total),
                                   _pct(c["max_position_pct"])))
         if side == "sell" and sym:
+            if value is not None and not math.isfinite(cash + value):
+                reasons.append("Bargeld: Kontowert läuft über")
             if qty is not None and _f(qty):
                 over = _f(qty) > held + 1e-9
             elif value is not None:
@@ -280,7 +362,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
                 acct["cash"] -= value
                 acct["values"][sym] = acct["values"].get(sym, 0.0) + value
                 if ref:
-                    acct["shares"][sym] = held + value / ref
+                    acct["shares"][sym] = held + (value / ref / (100 if is_option else 1))
             else:
                 acct["cash"] += value
                 acct["values"][sym] = max(acct["values"].get(sym, 0.0) - value, 0.0)
@@ -294,9 +376,11 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
             "value_usd": round(value, 2) if value is not None else None,
             "fingerprint": fingerprint(o), "verdict": verdict,
             "reasons": reasons, "warnings": warns,
+            "requires": [r["fingerprint"] for r in results if r["verdict"] == "PASS"],
         })
 
     return {
+        "check_id": uuid.uuid4().hex,
         "date": today,
         "paper": bool(c.get("paper", True)),
         "results": results,
@@ -304,6 +388,10 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None):
         "block": sum(1 for r in results if r["verdict"] == "BLOCK"),
         "warnings": top_warn,
         "cash_after": round(acct["cash"], 2),
+        "config_fingerprint": document_fingerprint({} if cfg is None else cfg),
+        "order_fingerprints": [fingerprint(o) for o in orders],
+        "broker_placed_fingerprint": document_fingerprint([
+            r for r in (state or {}).get("orders", []) if r.get("status") == "placed"]),
     }
 
 
@@ -358,12 +446,19 @@ def main(argv=None):
         orders = doc.get("orders", doc) if isinstance(doc, dict) else doc
         if not isinstance(orders, list) or not orders:
             raise RiskError("keine Aufträge in %s" % a.orders)
-        cfg = read_json(a.config, "Konfiguration", required=False) or {}
+        cfg = read_json(a.config, "Konfiguration", required=False)
+        cfg = {} if cfg is None else cfg
         portfolio = read_json(a.portfolio, "Depotdatei", required=False)
-        pdoc = read_json(a.prices, "Kursdatei", required=False) or {}
-        prices = pdoc.get("prices", pdoc) if isinstance(pdoc, dict) else {}
+        pdoc = read_json(a.prices, "Kursdatei", required=False)
+        pdoc = {} if pdoc is None else pdoc
+        if not isinstance(pdoc, dict):
+            raise RiskError("Kursdatei muss ein JSON-Objekt sein")
+        prices = pdoc.get("prices", pdoc)
         state = read_json(a.state, "Broker-Stand", required=False)
         res = check(orders, cfg, portfolio, prices, state, a.today)
+        res["inputs"] = {k: input_snapshot(path) for k, path in
+                         (("config", a.config), ("portfolio", a.portfolio), ("prices", a.prices))}
+        res["broker_state_path"] = os.path.realpath(os.path.abspath(a.state))
         if pdoc.get("as_of"):
             res["prices_as_of"] = pdoc["as_of"]
         if not a.no_write:

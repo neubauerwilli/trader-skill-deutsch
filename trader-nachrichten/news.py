@@ -286,6 +286,9 @@ def dedupe(items):
                 if t not in hit["touches"]:
                     hit["touches"].append(t)
             hit["touches"].sort()
+            for k in keys:
+                if k:
+                    seen[k] = hit
             continue
         for k in keys:
             if k:
@@ -336,7 +339,7 @@ def select(items, state, now, hours=48, show_all=False):
     cutoff = now - _dt.timedelta(hours=hours)
     out = []
     for it in items:
-        if it["time"] is not None and it["time"] < cutoff:
+        if it["time"] is not None and not cutoff <= it["time"] <= now:
             continue
         fp = fingerprint(it)
         it["new"] = fp not in seen

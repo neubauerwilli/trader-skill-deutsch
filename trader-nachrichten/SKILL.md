@@ -19,6 +19,9 @@ argument-hint: "[Ticker]"
 
 # trader-nachrichten
 
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
+
 Eine Position, die du hältst, kann sich in einer Minute ändern: verfehlte
 Quartalszahlen, ein Chef, der geht, eine Klage, eine Korrektur. Dieser Skill
 liest die beiden Quellen, die das als Erste melden, für jede deiner Aktien
@@ -34,7 +37,7 @@ python3 "${CLAUDE_SKILL_DIR}/news.py" --help
 
 - Deine Ticker: `--tickers`, sonst die Positionen aus `trader/portfolio.json`,
   sonst die Gewichte (`weights`) aus `trader/targets.json` (so läuft er direkt
-  nach `/trader-kopie`).
+  nach `/trader-skill-deutsch:trader-kopie`).
 - Schlagzeilen: der öffentliche Schlagzeilen-RSS von Yahoo Finance, ein Feed
   pro Ticker
   (`https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL&region=US&lang=en-US`).
@@ -86,11 +89,11 @@ python3 "${CLAUDE_SKILL_DIR}/news.py" --help
    Link und eine Zeile, warum es für dieses Depot wichtig ist (sein Gewicht,
    aus `trader/targets.json` oder `trader/portfolio.json`).
 4. Könnte eine Meldung den Plan ändern (eine 8-K-Korrektur nach 4.02, eine
-   Delisting-Mitteilung), sag das und schlage `/trader-analyst` für die
-   Zahlen oder `/trader-risiko` vor, um offene Aufträge neu zu prüfen. Handle
+   Delisting-Mitteilung), sag das und schlage `/trader-skill-deutsch:trader-analyst` für die
+   Zahlen oder `/trader-skill-deutsch:trader-risiko` vor, um offene Aufträge neu zu prüfen. Handle
    nie allein wegen einer Schlagzeile.
 
-Für den Dauerbetrieb nutze `/loop 30m /trader-nachrichten` während der
+Für den Dauerbetrieb nutze `/loop 30m /trader-skill-deutsch:trader-nachrichten` während der
 Börsenzeiten oder eine geplante Aufgabe jeden Morgen.
 
 ## Beispiel: das Depot aus dem Reel
@@ -102,7 +105,7 @@ turn over hiring records in Apple trade secrets case", getaggt mit legal),
 Coca-Cola-Dividendenartikel und von der SEC: Apples 8-K vom 30.07.2026
 (Punkt 2.02, Quartalszahlen) und das von Coca-Cola vom 28.07.2026 (2.02).
 Briefing: "Apple (deine größte Position, 30,7 %) hat einen Smart-Home-Hub für
-$299 vorgestellt; dazu ein Gerichtsbeschluss in seinem Verfahren um
+299 USD vorgestellt; dazu ein Gerichtsbeschluss in seinem Verfahren um
 Geschäftsgeheimnisse gegen OpenAI. Keine neuen Meldungen deiner fünf
 Unternehmen in dieser Woche." Hat ein Ticker keine Nachrichten, sag das,
 statt das Briefing aufzufüllen.
@@ -119,6 +122,6 @@ statt das Briefing aufzufüllen.
 ## Sicherheit
 
 Bildung und Werkzeug, **Keine Anlageberatung**. Dieser Skill liest und
-berichtet nur. Nichts gibt einen Auftrag auf außer `/trader-broker`, nachdem
-`/trader-risiko` besteht und du für genau diesen Auftrag ausdrücklich "Ja"
+berichtet nur. Nichts gibt einen Auftrag auf außer `/trader-skill-deutsch:trader-broker`, nachdem
+`/trader-skill-deutsch:trader-risiko` besteht und du für genau diesen Auftrag ausdrücklich "Ja"
 schreibst. Ohne dein "Ja" passiert nichts.

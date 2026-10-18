@@ -48,6 +48,7 @@ import argparse
 import datetime as _dt
 import gzip
 import json
+import math
 import os
 import re
 import sys
@@ -139,7 +140,7 @@ def facts_for(companyfacts, concept, unit_hint=None):
     if not node:
         return []
     units = node.get("units", {})
-    unit = unit_hint if unit_hint in units else next(iter(units), None)
+    unit = unit_hint if unit_hint is not None else next(iter(units), None)
     return units.get(unit, []) if unit else []
 
 
@@ -153,6 +154,9 @@ def periods(facts):
     latest, first = {}, {}
     for f in facts:
         if "start" not in f or f.get("form", "").split("/")[0] not in ("10-Q", "10-K", "20-F", "40-F"):
+            continue
+        value = f.get("val")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             continue
         key = (f["start"], f["end"])
         stamp = (f.get("filed", ""), f.get("accn", ""))
@@ -190,7 +194,15 @@ def quarterly(facts, derive_q4=True):
             inside.sort(key=lambda v: v["end"])
             if len(inside) != 3:
                 continue
+            # Drei Werte allein reichen nicht: Lücken oder Überschneidungen
+            # dürfen nicht als neun Monate vom Gesamtjahr abgezogen werden.
+            if inside[0]["start"] != start or any(
+                    _date(b["start"]) != _date(a["end"]) + _dt.timedelta(days=1)
+                    for a, b in zip(inside, inside[1:])):
+                continue
             last_q_start = _date(inside[-1]["end"]) + _dt.timedelta(days=1)
+            if not 80 <= (_date(end) - last_q_start).days <= 100:
+                continue
             q[end] = {"value": f["val"] - sum(v["value"] for v in inside),
                       "start": last_q_start.isoformat(), "end": end, "derived": True,
                       "fy": f.get("fy"), "fp": "Q4", "form": f.get("form"),
@@ -273,9 +285,13 @@ def analyse(companyfacts, quarters=6, name=None):
             "filed": base.get("filed"), "form": base.get("form"),
         })
     ttm = {}
+    latest_end = max(set(rev) | set(s["net_income"]))
     for key in ("revenue", "net_income", "eps_diluted"):
         last4 = sorted(s[key])[-4:]
-        if len(last4) == 4 and (_date(last4[-1]) - _date(last4[0])).days < 300:
+        contiguous = len(last4) == 4 and all(
+            _date(s[key][b]["start"]) == _date(a) + _dt.timedelta(days=1)
+            for a, b in zip(last4, last4[1:]))
+        if contiguous and last4[-1] == latest_end:
             ttm[key] = sum(s[key][e]["value"] for e in last4)
     if "eps_diluted" in ttm:
         ttm["eps_diluted"] = round(ttm["eps_diluted"], 2)

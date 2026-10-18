@@ -39,6 +39,7 @@ falscher Eingabe. Ein Filter ist ein Filter, keine Empfehlung.
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 
@@ -51,17 +52,22 @@ class ScreenError(Exception):
 
 # ---------------------------------------------------------------- inputs
 
+def finite_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def to_number(v):
     if isinstance(v, bool) or v is None:
         return v
     if isinstance(v, (int, float)):
-        return v
+        return v if finite_number(v) else None
     s = str(v).strip()
     if s == "" or s.lower() in ("na", "n/a", "none", "null", "-"):
         return None
     t = s.replace(",", "").replace("$", "").replace("%", "")
     try:
-        return float(t)
+        number = float(t)
+        return number if math.isfinite(number) else None
     except ValueError:
         return s
 
@@ -82,7 +88,8 @@ def load_metrics(path):
         rows = data.get("companies", data.get("rows")) if isinstance(data, dict) else data
         if not isinstance(rows, list):
             raise ScreenError("%s: erwartet wird eine Liste von Firmen oder {\"companies\": [...]}" % path)
-        rows = [dict(r) for r in rows]
+        rows = [{k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+                 for k, v in dict(r).items()} for r in rows]
     out = []
     for i, r in enumerate(rows):
         t = str(r.get("ticker") or r.get("symbol") or "").strip().upper()
@@ -99,11 +106,11 @@ def add_prices(rows, prices_path):
     prices = {k.upper(): v for k, v in (data.get("prices", data) or {}).items()}
     for r in rows:
         p = to_number(prices.get(r["ticker"]))
-        if not isinstance(p, (int, float)) or p <= 0:
+        if not finite_number(p) or p <= 0:
             continue
         r["price"] = p
         eps = to_number(r.get("eps_ttm"))
-        if isinstance(eps, (int, float)):
+        if finite_number(eps):
             r["earnings_yield"] = round(100.0 * eps / p, 2)
             if eps > 0:
                 r["pe"] = round(p / eps, 1)
@@ -133,9 +140,18 @@ def check_rules(spec):
             raise ScreenError("Regel Nr. %d: between braucht [niedrig, hoch]" % (i + 1))
         if r["op"] in ("in", "not in") and not isinstance(r["value"], list):
             raise ScreenError("Regel Nr. %d: %s braucht eine Liste" % (i + 1, r["op"]))
+        if r["op"] in (">", ">=", "<", "<=") and not finite_number(r["value"]):
+            raise ScreenError("Regel Nr. %d braucht eine endliche Zahl" % (i + 1))
+        if r["op"] == "between" and (not all(finite_number(v) for v in r["value"])
+                                      or r["value"][0] > r["value"][1]):
+            raise ScreenError("Regel Nr. %d braucht endliche Grenzen niedrig <= hoch" % (i + 1))
+        if isinstance(r["value"], float) and not math.isfinite(r["value"]):
+            raise ScreenError("Regel Nr. %d enthält keine endliche Zahl" % (i + 1))
     for i, k in enumerate(spec.get("rank", [])):
         if "metric" not in k or k.get("order", "desc") not in ("asc", "desc"):
             raise ScreenError("Rang Nr. %d braucht metric und order asc oder desc" % (i + 1))
+        if not finite_number(k.get("weight", 1)) or k.get("weight", 1) <= 0:
+            raise ScreenError("Rang Nr. %d braucht ein positives endliches Gewicht" % (i + 1))
     if spec.get("missing", "fail") not in ("fail", "skip"):
         raise ScreenError("missing muss \"fail\" oder \"skip\" sein")
 
@@ -154,6 +170,8 @@ def check(company, rule):
     """(passed, reason). passed ist None, wenn die Kennzahl fehlt."""
     m, op, want = rule["metric"], rule["op"], rule["value"]
     have = company.get(m)
+    if isinstance(have, float) and not math.isfinite(have):
+        have = None
     if have is None or have == "":
         return None, "%s fehlt" % m
     if op in ("in", "not in"):
@@ -164,15 +182,16 @@ def check(company, rule):
     if op in ("==", "!=") and not isinstance(have, (int, float)):
         ok = (str(have).upper() == str(want).upper()) == (op == "==")
         return ok, "%s %s %s %s" % (m, _fmt(have), op, _fmt(want))
-    if not isinstance(have, (int, float)):
+    if not finite_number(have):
         return False, "%s ist %r, keine Zahl" % (m, have)
     if op == "between":
         lo, hi = want
         ok = lo <= have <= hi
         return ok, "%s %s %s %s bis %s" % (m, _fmt(have), "liegt innerhalb von" if ok else "liegt außerhalb von",
                                           _fmt(lo), _fmt(hi))
-    ok = {">": have > want, ">=": have >= want, "<": have < want, "<=": have <= want,
-          "==": have == want, "!=": have != want}[op]
+    ok = {">": lambda: have > want, ">=": lambda: have >= want,
+          "<": lambda: have < want, "<=": lambda: have <= want,
+          "==": lambda: have == want, "!=": lambda: have != want}[op]()
     if ok:
         return True, "%s %s %s %s" % (m, _fmt(have), op, _fmt(want))
     return False, "%s %s, braucht %s %s" % (m, _fmt(have), op, _fmt(want))
@@ -212,7 +231,7 @@ def rank(results, keys):
     for k in keys:
         m, desc = k["metric"], k.get("order", "desc") == "desc"
         vals = [(r, r["metrics"].get(m)) for r in winners]
-        vals = [(r, v) for r, v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        vals = [(r, v) for r, v in vals if finite_number(v)]
         if not vals:
             continue
         ordered = sorted(v for _, v in vals)

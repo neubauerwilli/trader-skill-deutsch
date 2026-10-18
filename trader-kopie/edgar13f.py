@@ -50,6 +50,7 @@ import argparse
 import datetime as _dt
 import gzip
 import json
+import math
 import os
 import re
 import sys
@@ -313,6 +314,10 @@ def parse_info_table(data, multiplier=1):
             shares = float(f.get("sshPrnamt", "0").replace(",", ""))
         except ValueError:
             raise EdgarError("fehlerhafte Zahl in der Zeile für %s" % f.get("nameOfIssuer"))
+        if not math.isfinite(value) or not math.isfinite(shares) or value < 0 or shares < 0:
+            raise EdgarError("ungültiger Wert oder Bestand für %s" % f.get("nameOfIssuer"))
+        if not f.get("cusip"):
+            raise EdgarError("CUSIP fehlt für %s; Position nicht eindeutig zuordenbar" % f.get("nameOfIssuer"))
         rows.append({
             "issuer": f.get("nameOfIssuer", ""),
             "title": f.get("titleOfClass", ""),
@@ -375,13 +380,16 @@ def aggregate(rows):
 
 
 def combine_classes(positions, total):
-    """Addiert die Aktiengattungen eines Emittenten (gleicher 6-stelliger CUSIP-Emittentencode).
+    """Addiert ausdrücklich bezeichnete Aktienklassen eines Emittenten.
+
+    Ein CUSIP-Emittentencode allein genügt nicht: ETF-Produkte eines Trusts
+    dürfen nicht als verschiedene Klassen derselben Aktie verschmolzen werden.
 
     Nur Aktienzeilen werden zusammengefasst. Die zusammengefasste Position behält
     Ticker und Namen ihrer größten Gattung und listet jede CUSIP und jeden Ticker, die sie hält."""
     out, by_issuer = [], {}
     for p in positions:
-        if not is_stock(p):
+        if not is_stock(p) or not class_letter(p["title"]):
             out.append(dict(p))
             continue
         key = p["cusip"][:6]
@@ -504,8 +512,6 @@ class TickerIndex(object):
         if not cands:
             return None, True
         if len(cands) == 1:
-            return norm_ticker(cands[0]), False
-        if all(t.startswith(cands[0]) for t in cands[1:]):
             return norm_ticker(cands[0]), False
         letter = class_letter(title_of_class)
         if letter:

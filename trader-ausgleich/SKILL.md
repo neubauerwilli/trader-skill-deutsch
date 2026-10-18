@@ -12,11 +12,14 @@ description: >-
   overweight", oder auf Deutsch "gleich mein Depot aus", "mein Depot ist
   abgedriftet", "bring es zurück auf die Ziele", "ich habe Geld eingezahlt",
   "das neue 13F hat die Gewichte geändert", "bin ich übergewichtet", "Rebalancing",
-  oder nach Zeitplan (monatlich oder vierteljährlich), nachdem /trader-kopie die Ziele aktualisiert hat.
+  oder nach Zeitplan (monatlich oder vierteljährlich), nachdem /trader-skill-deutsch:trader-kopie die Ziele aktualisiert hat.
 argument-hint: "[Band in Punkten]"
 ---
 
 # trader-ausgleich
+
+**Befehle:** Die vollständigen Aufrufe unten gelten für die Plugininstallation. Bei einzeln nach `.claude/skills/` kopierten Ordnern entfällt der Präfix `trader-skill-deutsch:`. Verwende beim Wechsel zu einem anderen Skill den in deiner Sitzung tatsächlich angebotenen Namen.
+
 
 Der Depot-Ausgleich (Rebalancing) hält das Depot so, wie der Plan es vorsieht.
 Kurse bewegen sich, neues Geld kommt dazu und ein neues 13F ändert die Gewichte;
@@ -60,9 +63,11 @@ python3 "${CLAUDE_SKILL_DIR}/rebalance.py" --json
   reicht es nicht, werden alle Käufe um denselben Anteil verkleinert.
 - Trades unter `min_order_usd` werden übersprungen. Ein Trade über
   `max_order_usd` wird auf das Maximum gekürzt, mit dem Hinweis, nach der
-  Ausführung nochmal zu laufen.
+  Ausführung nochmal zu laufen. Das gilt auch bei `--sell-untracked`.
 - **Nicht verfolgte** Positionen (nicht in den Zielen) bleiben liegen und werden
   aufgelistet, außer der Nutzer will sie mit `--sell-untracked` verkaufen.
+- Der Deckel begrenzt die **Ziele**. Bereits übergroße Positionen innerhalb des gewählten Bands bleiben unangetastet; eine gekürzte Order kann die Abweichung nur teilweise beheben. Ein vorbestehender Mangel an Cash erzwingt ebenfalls keinen Verkauf innerhalb des Bands. Der Bericht ist deshalb keine Garantie, dass danach jeder Ist-Wert den Limits entspricht.
+- Verkäufe werden auf die unterstützte Stückpräzision abgerundet (vier Nachkommastellen, bei ganzen Aktien ganze Stücke). Kleine Restbestände können bleiben. Cash nach dem Plan setzt voraus, dass alle vorgeschlagenen Verkäufe und Käufe zu den eingesetzten Kursen ausgeführt werden; Gebühren und Kursbewegungen sind nicht enthalten.
 
 ## Schritte
 
@@ -73,21 +78,21 @@ python3 "${CLAUDE_SKILL_DIR}/rebalance.py" --json
 3. Vor jedem Verkauf führ trader-steuer aus (`lots.py sell TICKER SHARES`) und
    zeig, was der Verkauf realisieren würde. Ein Gewinner-Verkauf kann eine
    Steuerrechnung bedeuten.
-4. Will der Nutzer die Trades: `rebalance.py --write`, dann `/trader-risiko`,
-   dann `/trader-broker`, ein Ja pro Auftrag.
+4. Will der Nutzer die Trades: `rebalance.py --write`, dann `/trader-skill-deutsch:trader-risiko`,
+   dann `/trader-skill-deutsch:trader-broker`, ein Ja pro Auftrag.
 
 ## Beispiel: das Depot aus dem Reel
 
-Das Kopie-Depot, gekauft am 13.10.2026 (AAPL $1,250 gedeckelt, AXP $1,119,
-GOOGL $823, KO $708, BAC $600, $500 Bargeld), zu den Schlusskursen dieses Tages
+Das Kopie-Depot, gekauft am 13.10.2026 (AAPL 1,250 USD gedeckelt, AXP 1,119 USD,
+GOOGL 823 USD, KO 708 USD, BAC 600 USD, 500 USD Bargeld), zu den Schlusskursen dieses Tages
 bewertet, liegt auf seinen Zielen: jede Abweichung ist unter 0.1 Punkt, also
 sagt `rebalance.py` "Nichts liegt außerhalb des Bands" und endet mit Exit 1.
-Zahlt der Nutzer $2,000 Bargeld ein, ist das Depot $7,000 wert und der Deckel
-wird $1,750. AAPL liegt dann 7.1 Punkte unter seinem Ziel und AXP 6.4, beide
-außerhalb des 5-Punkte-Bands, also schlägt er vor, $499 AAPL und $446 AXP zu
+Zahlt der Nutzer 2,000 USD Bargeld ein, ist das Depot 7,000 USD wert und der Deckel
+wird 1,750 USD. AAPL liegt dann 7.1 Punkte unter seinem Ziel und AXP 6.4, beide
+außerhalb des 5-Punkte-Bands, also schlägt er vor, 499 USD AAPL und 446 USD AXP zu
 kaufen. GOOGL, KO und BAC liegen auch unter dem Ziel, aber innerhalb des Bands,
-also warten sie. Zahlt er stattdessen $5,000 ein, liegen alle fünf außerhalb des
-Bands: fünf Käufe, die den Puffer von $1,000 als Bargeld stehen lassen.
+also warten sie. Zahlt er stattdessen 5,000 USD ein, liegen alle fünf außerhalb des
+Bands: fünf Käufe, die den Puffer von 1,000 USD als Bargeld stehen lassen.
 
 ## Was er nie tut
 
@@ -99,9 +104,6 @@ außer er wird darum gebeten, und sagt nie, dass ein Rebalancing die Rendite ver
 
 - Bildung und Werkzeug. Keine Anlageberatung. Ein Rebalancing folgt deinen eigenen Zielen, keiner Prognose.
 - Standardmäßig Paper Trading, also Spielgeld (`"paper": true`). Scharf zu gehen ist deine eigene Entscheidung, in deiner eigenen Konfiguration.
-- In diesem Paket gibt nur trader-broker einen Auftrag auf, und nur wenn alle drei Dinge stimmen: trader-risiko
-  hat genau diesen Auftrag heute geprüft und freigegeben, du hast im Chat für genau diesen einen Auftrag ausdrücklich
-  „Ja“ geschrieben (nichts passiert ohne dein „Ja“), und du hast auf Claudes eigener Karte einmal auf „Erlauben“ geklickt, weil das
-  Order-Tool auf „Needs approval“ (Genehmigung nötig) steht (Customize > Connectors > tool permissions). Stell ein Order-Tool nie auf „Always allow“ (Immer erlauben).
+- Dieses Skript schreibt Vorschläge. trader-broker bereitet Tickets vor, führt sie selbst aber nicht aus. Für einen separat verbundenen Broker sind Risikoprüfung, ein ausdrückliches Ja je Order und eine zusätzlich konfigurierte Tool-Genehmigung vorgesehen. Das sind Projektregeln und Berechtigungen, keine technisch unfehlbare Sperre aller Ausführungswege. Kein Order-Tool auf "Always allow" setzen.
 - Keine Optionen, kein Hebel (Margin), kein Leerverkauf (Short Selling) und keine Hebelprodukte, außer die Konfiguration erlaubt es und du bestätigst es.
 - Broker-Schlüssel liegen in Umgebungsvariablen oder in der Claude-Desktop-Konfiguration, nie im Chat.

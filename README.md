@@ -2,7 +2,8 @@
 
 Elf Claude-Skills auf Deutsch, die die Investoren kopieren, denen du vertraust, die Nachrichten und den US-Kongress im Blick behalten, jeden Trade an dein Budget anpassen und nie einen Auftrag ohne dein Ja abschicken.
 
-Kostenlos, MIT, keine Anmeldung, kein API-Schlüssel. Die Werkzeuge sind einfaches Python und lesen
+Das Skill-Paket ist kostenlos und MIT-lizenziert. Claude Code braucht einen unterstützten Zugang;
+Claude-Nutzung und optionale Broker-Dienste sind separat. Die Werkzeuge sind einfaches Python und lesen
 öffentliche Daten: SEC EDGAR, das Melderegister des US-Repräsentantenhauses, Nachrichten-Feeds.
 
 Einer nimmt den Investor auseinander, den du kopieren willst, direkt aus seiner 13F-Meldung. Einer
@@ -16,15 +17,8 @@ abschicken. Standard ist Paper Trading, also Spielgeld.
 
 ## Einrichten
 
-Füge das in Claude ein:
-
-```
-https://github.com/neubauerwilli/trader-skill-deutsch
-
-install skill
-```
-
-Oder als Plugin in Claude Code:
+Installiere die vollständige Fassung als Plugin in [Claude Code](https://code.claude.com/docs/en/overview).
+Sende dort diese zwei Befehle einzeln, prüfe die Quelle und bestätige den angezeigten Installationsstatus:
 
 ```
 /plugin marketplace add neubauerwilli/trader-skill-deutsch
@@ -40,8 +34,13 @@ cp -r trader-skill-deutsch/trader-* ~/.claude/skills/
 ```
 
 Nur für ein Projekt statt global: dieselben Ordner nach `.claude/skills/` in deinem Projekt kopieren.
-Gar kein Claude Code? Füge eine einzelne `SKILL.md` oben in einen Chat ein, dann läuft sie als Modus.
-Die Python-Werkzeuge fallen dann weg, die Methode funktioniert trotzdem.
+Starte die Sitzung bei Bedarf neu. Unter `/` sollte zum Beispiel
+`/trader-skill-deutsch:trader-budget` erscheinen. Hilfe zur Plugininstallation:
+[offizielle Anleitung](https://code.claude.com/docs/en/discover-plugins).
+
+Im normalen Claude-Webchat installiert ein GitHub-Link mit "install skill" nicht automatisch die
+Python-Werkzeuge. Eine hineinkopierte `SKILL.md` liefert nur die Arbeitsanweisung. Für die hier
+beschriebenen lokalen Skripte verwende Claude Code; Brokeranbindungen sind davon getrennt.
 
 Die Werkzeuge brauchen Python 3.8 oder neuer. Nichts per pip installieren. Unter Windows heißt der
 Aufruf oft `py` statt `python3`. Die SEC verlangt, dass sich jedes Skript ausweist: Trag deinen Namen
@@ -52,17 +51,17 @@ die Umgebungsvariable `SEC_USER_AGENT`.
 
 | Befehl | Rolle | Was er macht |
 | --- | --- | --- |
-| `/trader-kopie` | Investor kopieren | Liest die 13F-HR-Meldung eines Investors bei SEC EDGAR und baut sein Depot als Gewichte nach, die du kopieren kannst, samt allem, was seit dem letzten Quartal gekauft, aufgestockt, reduziert und verkauft wurde. |
-| `/trader-nachrichten` | Nachrichten-Wächter | Beobachtet Schlagzeilen und SEC-Meldungen (8-K) zu jeder Aktie, die du hältst, und markiert, was sie betrifft. |
-| `/trader-budget` | Budget-Verwalter | Teilt jede Position nach deinem Budget auf, hält einen Bargeld-Puffer und deckelt jede einzelne Aktie. |
-| `/trader-pelosi` | Pelosi-Tracker | Liest die Aktienmeldungen des US-Kongresses (House PTRs), sobald sie erscheinen, macht aus jedem PDF saubere Zeilen und meldet dir jede neue Meldung einmal. |
-| `/trader-analyst` | Quartalszahlen-Analyst | Holt die gemeldeten Zahlen jeder Firma aus SEC XBRL (Umsatz, Gewinn, verwässerter Gewinn je Aktie, Margen, Wachstum) und ihre letzte Quartalsmitteilung. |
-| `/trader-filter` | Aktienfilter | Prüft Firmen gegen deine eigenen Regeln und sortiert, was durchkommt. |
-| `/trader-risiko` | Risiko-Wächter | Prüft jeden vorgeschlagenen Auftrag gegen deine Grenzen und blockt alles, was darüber liegt. |
-| `/trader-broker` | Auftrags-Ausführer | Macht aus einem freigegebenen Auftrag genau das Ticket, das dein Broker-Connector bekommt, und hält dein Ja fest. Er schickt selbst nie etwas ab. |
-| `/trader-steuer` | Steuer-Helfer | Verfolgt Einstandskurse je Kauf, Gewinne und Verluste, Kandidaten für Verlustverrechnung und Wash Sales (US-Steuerrecht). |
-| `/trader-alarm` | Kursalarme | Meldet sich, wenn ein Kursziel, ein Stopp oder die Eröffnungsglocke erreicht ist, mit dem echten NYSE-Kalender. |
-| `/trader-ausgleich` | Depot-Ausgleich | Bringt dein Depot zurück auf die Zielgewichte, wenn es über deine Bandbreite hinaus abweicht (Rebalancing). |
+| `/trader-skill-deutsch:trader-kopie` | Investor kopieren | Liest die 13F-HR-Meldung eines Investors bei SEC EDGAR und baut sein Depot als Gewichte nach, die du kopieren kannst, samt allem, was seit dem letzten Quartal gekauft, aufgestockt, reduziert und verkauft wurde. |
+| `/trader-skill-deutsch:trader-nachrichten` | Nachrichten-Wächter | Beobachtet Schlagzeilen und SEC-Meldungen (8-K) zu jeder Aktie, die du hältst, und markiert, was sie betrifft. |
+| `/trader-skill-deutsch:trader-budget` | Budget-Verwalter | Teilt jede Position nach deinem Budget auf, hält einen Bargeld-Puffer und deckelt jede einzelne Aktie. |
+| `/trader-skill-deutsch:trader-pelosi` | Pelosi-Tracker | Liest die Aktienmeldungen des US-Kongresses (House PTRs), sobald sie erscheinen, macht aus jedem PDF saubere Zeilen und meldet dir jede neue Meldung einmal. |
+| `/trader-skill-deutsch:trader-analyst` | Quartalszahlen-Analyst | Holt die gemeldeten Zahlen jeder Firma aus SEC XBRL (Umsatz, Gewinn, verwässerter Gewinn je Aktie, Margen, Wachstum) und ihre letzte Quartalsmitteilung. |
+| `/trader-skill-deutsch:trader-filter` | Aktienfilter | Prüft Firmen gegen deine eigenen Regeln und sortiert, was durchkommt. |
+| `/trader-skill-deutsch:trader-risiko` | Risiko-Wächter | Prüft jeden vorgeschlagenen Auftrag gegen deine Grenzen und blockt alles, was darüber liegt. |
+| `/trader-skill-deutsch:trader-broker` | Auftrags-Ausführer | Macht aus einem freigegebenen Auftrag genau das Ticket, das dein Broker-Connector bekommt, und hält dein Ja fest. Er schickt selbst nie etwas ab. |
+| `/trader-skill-deutsch:trader-steuer` | Steuer-Helfer | Verfolgt Einstandskurse je Kauf, Gewinne und Verluste, Kandidaten für Verlustverrechnung und Wash Sales (US-Steuerrecht). |
+| `/trader-skill-deutsch:trader-alarm` | Kursalarme | Meldet sich, wenn ein Kursziel, ein Stopp oder die Eröffnungsglocke erreicht ist, mit dem echten NYSE-Kalender. |
+| `/trader-skill-deutsch:trader-ausgleich` | Depot-Ausgleich | Bringt dein Depot zurück auf die Zielgewichte, wenn es über deine Bandbreite hinaus abweicht (Rebalancing). |
 
 ## So nutzt du es
 
@@ -77,25 +76,25 @@ ausgleich / steuer -> risiko -> broker            (pflegen)
 
 Ein Beispiel: Berkshire Hathaway mit 5.000 Dollar kopieren.
 
-1. **`/trader-kopie`** „kopier die Top 5 von Berkshire“. Der Skill findet Berkshire Hathaway
+1. **`/trader-skill-deutsch:trader-kopie`** „kopier die Top 5 von Berkshire“. Der Skill findet Berkshire Hathaway
    (CIK 1067983), lädt die neueste 13F-HR-Meldung (Q2 2026, eingereicht am 14.08.2026) und liest jede
    Zeile: Apple 22,04 % des gemeldeten Depots, American Express 17,14 %, Alphabet 12,62 % (beide
    Aktiengattungen), Coca-Cola 10,86 %, Bank of America 9,20 %. Seit dem letzten Quartal: neu D.R. Horton,
    komplett verkauft Constellation Brands. Er schreibt `trader/targets.json`, die Top 5 neu auf 100 %
    gerechnet: 30,67 / 23,85 / 17,56 / 15,11 / 12,80 %.
-2. **`/trader-budget`** mit 5.000 Dollar Budget, 10 % Bargeld-Puffer und 25 % Obergrenze: Apple 1.250 Dollar
+2. **`/trader-skill-deutsch:trader-budget`** mit 5.000 Dollar Budget, 10 % Bargeld-Puffer und 25 % Obergrenze: Apple 1.250 Dollar
    (gedeckelt), American Express 1.119 Dollar, Alphabet 823 Dollar, Coca-Cola 708 Dollar, Bank of America
    600 Dollar, 500 Dollar Bargeld, 0 Dollar ungenutzt. Er schreibt `trader/orders.json` als Vorschläge.
-3. **`/trader-risiko`** prüft alle fünf gegen deine Grenzen: gesperrte Ticker, Auftragsgröße,
+3. **`/trader-skill-deutsch:trader-risiko`** prüft alle fünf gegen deine Grenzen: gesperrte Ticker, Auftragsgröße,
    Positionsgröße nach dem Kauf, den Bargeld-Puffer, keine Optionen und kein Kredit. PASS oder BLOCK,
    mit Begründung.
-4. **`/trader-broker`** zeigt dir jedes Ticket: „Buy $1,250 of AAPL, market, day“. Du tippst Ja für genau
+4. **`/trader-skill-deutsch:trader-broker`** zeigt dir jedes Ticket: „Buy $1,250 of AAPL, market, day“. Du tippst Ja für genau
    diesen Auftrag. Claude ruft deinen Broker-Connector auf (den MCP-Server von Alpaca, standardmäßig mit
    Spielgeld-Konto), und Claudes eigene Karte „Allow once / Deny“ fragt dich noch einmal.
-5. Nach Zeitplan: **`/trader-nachrichten`** markiert Schlagzeilen zu deinen Aktien, **`/trader-pelosi`**
-   meldet dir neue Offenlegungen, und **`/trader-alarm`** meldet sich bei deinen Kursmarken.
-6. Jedes Quartal: **`/trader-kopie`** vergleicht die neue 13F-Meldung mit der alten, und
-   **`/trader-ausgleich`** schlägt die Trades vor, um wieder gleichzuziehen.
+5. Nach Zeitplan: **`/trader-skill-deutsch:trader-nachrichten`** markiert Schlagzeilen zu deinen Aktien, **`/trader-skill-deutsch:trader-pelosi`**
+   meldet dir neue Offenlegungen, und **`/trader-skill-deutsch:trader-alarm`** meldet sich bei deinen Kursmarken.
+6. Jedes Quartal: **`/trader-skill-deutsch:trader-kopie`** vergleicht die neue 13F-Meldung mit der alten, und
+   **`/trader-skill-deutsch:trader-ausgleich`** schlägt die Trades vor, um wieder gleichzuziehen.
 
 ## Die Werkzeuge
 
@@ -133,8 +132,8 @@ Lage nicht, sie kann nicht in die Zukunft sehen, und wer einen Investor kopiert,
 Ergebnisse. Du kannst Geld verlieren. Entscheide selbst und sprich mit einer zugelassenen Beratung,
 wenn du Rat brauchst.
 
-**Kein Trade geht durch, bevor du Ja sagst.** Nur `/trader-broker` kann zu einem Auftrag führen, und
-nur, nachdem `/trader-risiko` genau diesen Auftrag freigegeben hat und du im Chat Ja dazu tippst. Stell
+**Kein Trade geht durch, bevor du Ja sagst.** Nur `/trader-skill-deutsch:trader-broker` kann zu einem Auftrag führen, und
+nur, nachdem `/trader-skill-deutsch:trader-risiko` genau diesen Auftrag freigegeben hat und du im Chat Ja dazu tippst. Stell
 dein Broker-Werkzeug in Claude auf „Needs approval“ (Customize, Connectors, Tool-Berechtigungen), nie
 auf „Always allow“, damit Claudes eigene Karte „Allow once / Deny“ eine zweite Prüfung ist. Keine
 Optionen, kein Kredit, keine Leerverkäufe und kein Hebel, außer du schaltest sie ein.
@@ -147,8 +146,9 @@ listet nur gekaufte Positionen in US-gelisteten Aktien und ein paar verwandten W
 Leerverkäufe, kein Bargeld, keine im Ausland gelisteten Aktien. Du siehst, was sie hielten, nicht, was
 sie heute halten.
 
-**Die Trades des Kongresses sind öffentlich, keine Insider-Informationen.** Abgeordnete müssen Trades
-über 1.000 Dollar innerhalb von 45 Tagen offenlegen (STOCK Act). Der Pelosi-Skill liest diese
+**Die Trades des Kongresses sind öffentlich, keine Insider-Informationen.** Meldepflichtige Geschäfte
+über 1.000 Dollar werden spätestens 30 Tage nach Kenntnis, in jedem Fall spätestens 45 Tage nach dem
+Geschäft offengelegt. Der Pelosi-Skill liest diese
 öffentlichen Meldungen, sobald sie erscheinen, mit den Beträgen als die Spannen, in denen sie gemeldet
 werden. Er hat keinen Zugang zu irgendetwas, das nicht öffentlich ist.
 
@@ -156,8 +156,25 @@ werden. Er hat keinen Zugang zu irgendetwas, das nicht öffentlich ist.
 die Chart-Schnittstelle von Yahoo Finance (inoffiziell, sie kann sich ändern). Prüf alles Wichtige bei
 deinem Broker, bevor du handelst.
 
-**Steuern.** `/trader-steuer` rechnet mit Kaufposten und Wash-Sale-Fristen nach US-Steuerrecht. In
-Deutschland gilt die Abgeltungsteuer. Das ist keine Steuerberatung.
+**Steuern.** `/trader-skill-deutsch:trader-steuer` rechnet mit Kaufposten und Wash-Sale-Fristen nach US-Steuerrecht. In
+Deutschland und Österreich wird das Steuerrecht nicht vollständig abgebildet. Das ist keine Steuerberatung.
+
+## Prüfstand und Aktualisierung
+
+Version 1.0.1 korrigiert Rundung an Positionslimits, ungültige Zahlen und Datenzuordnungen sowie
+veraltete oder mehrdeutige Orderfreigaben. Nach einem Update alte `trader/state/risk.json` neu mit
+`trader-risiko/check.py` erzeugen. Änderungen an Regeln, Aufträgen, Kursen oder Depotdaten brauchen
+eine neue Risikoprüfung. Ein platziertes Verkaufsticket ist noch kein ausgeführter Verkauf.
+
+Die lokalen Regressionen lassen sich ohne Broker und ohne zusätzliche Python-Pakete ausführen:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Die Tests verwenden fiktive Daten. Sie ersetzen weder die Kontrolle echter Brokerabrechnungen
+noch die Prüfung aktueller Originalmeldungen. Anpassungen von Optionskontrakten sowie eine
+vollständige steuerliche Fortschreibung von Wash-Sale-Basis und Haltefristen sind nicht abgedeckt.
 
 ## Dateien
 
@@ -183,7 +200,8 @@ Deutsche Fassung von Willi Neubauer, [willineubauer.com](https://willineubauer.c
 
 Beruht auf dem englischen [Trader skill](https://github.com/Jakeschincariol/trader-skill) von Jake
 Schincariol ([opusjake.ai](https://opusjake.ai)), veröffentlicht unter MIT. Übersetzt für den
-deutschsprachigen Raum. Daten, Zahlen und Rechenwege sind unverändert.
+deutschsprachigen Raum. Diese Fassung enthält zusätzlich geprüfte Korrekturen an Eingabevalidierung,
+Berechnungen und Freigabeprüfungen. Sie macht aus Beispieldaten keine Anlageempfehlungen.
 
 ## Lizenz
 
