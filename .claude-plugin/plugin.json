@@ -1,0 +1,23 @@
+{
+  "name": "trader-skill-deutsch",
+  "description": "Elf Claude-Skills auf Deutsch, die die Investoren kopieren, denen du vertraust, die Nachrichten und den US-Kongress im Blick behalten, jeden Trade an dein Budget anpassen und nie einen Auftrag ohne dein Ja abschicken.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Willi Neubauer",
+    "url": "https://willineubauer.com"
+  },
+  "homepage": "https://github.com/neubauerwilli/trader-skill-deutsch",
+  "repository": "https://github.com/neubauerwilli/trader-skill-deutsch",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "claude-skills",
+    "deutsch",
+    "investieren",
+    "13f",
+    "aktien",
+    "kongress-trades",
+    "depot"
+  ],
+  "skills": "./"
+}

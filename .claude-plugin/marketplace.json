@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "trader-skill-deutsch",
+  "description": "Der Trader-Skill auf Deutsch für Claude",
+  "owner": {
+    "name": "Willi Neubauer",
+    "url": "https://willineubauer.com"
+  },
+  "plugins": [
+    {
+      "name": "trader-skill-deutsch",
+      "description": "Elf Claude-Skills fürs Investieren auf Deutsch: die 13F-Meldung eines berühmten Investors kopieren, Nachrichten beobachten, Trades an dein Budget anpassen, die Aktienmeldungen des US-Kongresses verfolgen, Quartalszahlen lesen, Aktien filtern, Risiko prüfen, freigegebene Aufträge vorbereiten, Steuerverluste finden, Kursalarme und Depot-Ausgleich.",
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/neubauerwilli/trader-skill-deutsch"
+    }
+  ]
+}
